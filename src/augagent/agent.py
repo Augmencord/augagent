@@ -54,26 +54,16 @@ from augagent.tools import AugTool
 class AugAgent(BaseModel):
     """A single autonomous agent with a built-in ReAct loop.
 
-    Parameters
-    ----------
-    name:
-        Unique, human-readable identifier for this agent.
-    role:
-        The agent's persona (e.g. ``"Senior Python Developer"``).
-    goal:
-        One-sentence objective guiding behaviour.
-    backstory:
-        Rich context that shapes reasoning style and domain knowledge.
-    llm_config:
-        Connection and generation settings for the LLM provider.
-    tools:
-        :class:`~augagent.tools.AugTool` instances the agent may invoke.
-    max_iterations:
-        Safety cap on ReAct loop iterations (Reason → Act → Observe).
-    verbose:
-        Enable detailed step-by-step logging.
-    allow_delegation:
-        Whether this agent may delegate sub-tasks to teammates.
+    Args:
+        name (str): Unique, human-readable identifier for this agent.
+        role (str): The agent's persona (e.g., "Senior Python Developer").
+        goal (str): One-sentence objective guiding behaviour.
+        backstory (str, optional): Rich context that shapes reasoning style and domain knowledge. Defaults to "".
+        llm_config (LLMConfig, optional): Connection and generation settings for the LLM provider.
+        tools (list[AugTool], optional): AugTool instances the agent may invoke. Defaults to [].
+        max_iterations (int, optional): Safety cap on ReAct loop iterations (Reason -> Act -> Observe). Defaults to 25.
+        verbose (bool, optional): Enable detailed step-by-step logging. Defaults to False.
+        allow_delegation (bool, optional): Whether this agent may delegate sub-tasks to teammates. Defaults to False.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
