@@ -49,7 +49,7 @@ from augagent.team import AugTeam, Process, Team
 from augagent.telemetry import AgentLogger, get_logger
 from augagent.tools import AugTool, Tool, aug_tool, tool
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
 
 __all__ = [
     # Core orchestration
