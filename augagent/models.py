@@ -67,7 +67,7 @@ class LLMConfig(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     model: str = Field(
-        default="gpt-4o",
+        default="qwen2.5-coder:7b",
         description="Model identifier (e.g. 'gpt-4o', 'claude-3-opus', 'llama3').",
     )
     api_key: SecretStr | None = Field(
@@ -82,7 +82,7 @@ class LLMConfig(BaseModel):
         description="Environment variable to read the API key from when ``api_key`` is None.",
     )
     base_url: str = Field(
-        default="https://api.openai.com/v1",
+        default="http://localhost:11434/v1",
         description="Base URL of the chat-completions API.",
     )
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)

@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import inspect
 from typing import Any
 
 import httpx
@@ -54,16 +55,26 @@ from augagent.tools import AugTool
 class AugAgent(BaseModel):
     """A single autonomous agent with a built-in ReAct loop.
 
-    Args:
-        name (str): Unique, human-readable identifier for this agent.
-        role (str): The agent's persona (e.g., "Senior Python Developer").
-        goal (str): One-sentence objective guiding behaviour.
-        backstory (str, optional): Rich context that shapes reasoning style and domain knowledge. Defaults to "".
-        llm_config (LLMConfig, optional): Connection and generation settings for the LLM provider.
-        tools (list[AugTool], optional): AugTool instances the agent may invoke. Defaults to [].
-        max_iterations (int, optional): Safety cap on ReAct loop iterations (Reason -> Act -> Observe). Defaults to 25.
-        verbose (bool, optional): Enable detailed step-by-step logging. Defaults to False.
-        allow_delegation (bool, optional): Whether this agent may delegate sub-tasks to teammates. Defaults to False.
+    Parameters
+    ----------
+    name:
+        Unique, human-readable identifier for this agent.
+    role:
+        The agent's persona (e.g. ``"Senior Python Developer"``).
+    goal:
+        One-sentence objective guiding behaviour.
+    backstory:
+        Rich context that shapes reasoning style and domain knowledge.
+    llm_config:
+        Connection and generation settings for the LLM provider.
+    tools:
+        :class:`~augagent.tools.AugTool` instances the agent may invoke.
+    max_iterations:
+        Safety cap on ReAct loop iterations (Reason → Act → Observe).
+    verbose:
+        Enable detailed step-by-step logging.
+    allow_delegation:
+        Whether this agent may delegate sub-tasks to teammates.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
@@ -84,6 +95,7 @@ class AugAgent(BaseModel):
     max_iterations: int = Field(default=25, ge=1)
     verbose: bool = False
     allow_delegation: bool = False
+    require_human_approval: bool = False
 
     # ── internal state (private, excluded from serialisation) ─────────────
     _message_history: list[dict[str, Any]] = PrivateAttr(default_factory=list)
@@ -91,8 +103,16 @@ class AugAgent(BaseModel):
     # ══════════════════════════════════════════════════════════════════════
     # PUBLIC API
     # ══════════════════════════════════════════════════════════════════════
+    
+    def _get_active_tools(self) -> list[AugTool]:
+        active_tools = list(self.tools)
+        if self.allow_delegation:
+            from augagent.tools import DelegateWorkTool
+            if not any(t.name == DelegateWorkTool.name for t in active_tools):
+                active_tools.append(DelegateWorkTool)
+        return active_tools
 
-    async def execute(self, prompt: str) -> TaskResult:
+    async def execute(self, prompt: str, message_history: list[dict[str, Any]] | None = None, stream_callback: Any | None = None) -> TaskResult:
         """Run the agent's ReAct loop on the given prompt."""
         logger = get_logger()
         start = time.time()
@@ -101,7 +121,7 @@ class AugAgent(BaseModel):
             logger.log_info(f"[{self.name}] starting execution with {self.llm_config.model}")
 
         try:
-            output, usage, iterations = await self._react_loop(prompt, logger)
+            output, usage, iterations = await self._react_loop(prompt, message_history, logger, stream_callback)
             elapsed = time.time() - start
 
             result = TaskResult(
@@ -140,13 +160,20 @@ class AugAgent(BaseModel):
     async def _react_loop(
         self,
         prompt: str,
+        message_history: list[dict[str, Any]] | None,
         logger: Any,
+        stream_callback: Any | None = None,
     ) -> tuple[str, dict[str, int], int]:
         """Core ReAct loop."""
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": self._build_system_prompt()},
-            {"role": "user", "content": prompt},
-        ]
+        if message_history:
+            messages = list(message_history)
+            if prompt:
+                messages.append({"role": "user", "content": prompt})
+        else:
+            messages = [
+                {"role": "system", "content": self._build_system_prompt()},
+                {"role": "user", "content": prompt},
+            ]
         self._message_history = list(messages)
 
         total_usage: dict[str, int] = {
@@ -160,7 +187,7 @@ class AugAgent(BaseModel):
                 logger.log_info(f"[{self.name}] --- iteration {iteration} / {self.max_iterations} ---")
 
             # ── REASON: call the LLM ─────────────────────────────────────
-            completion = await self._call_llm(messages, logger)
+            completion = await self._call_llm(messages, logger, stream_callback)
 
             if completion.usage:
                 total_usage["prompt_tokens"] += completion.usage.prompt_tokens
@@ -188,6 +215,12 @@ class AugAgent(BaseModel):
                     tool_name=tc.function.name,
                     args=tc.function.arguments[:200]
                 )
+                
+                if self.require_human_approval:
+                    logger.log_info(f"[{self.name}] HITL interruption requested for {tc.function.name}")
+                    self._message_history = list(messages)
+                    return f"__INTERRUPT__: {tc.function.name}({tc.function.arguments})", total_usage, iteration
+                    
                 tool_output = await self._execute_tool_call(tc, logger)
                 messages.append({
                     "role": "tool",
@@ -220,6 +253,7 @@ class AugAgent(BaseModel):
         self,
         messages: list[dict[str, Any]],
         logger: Any,
+        stream_callback: Any | None = None,
     ) -> ChatCompletion:
         """POST to ``/chat/completions`` with retry + exponential backoff."""
         cfg = self.llm_config
@@ -246,8 +280,12 @@ class AugAgent(BaseModel):
         if cfg.stop:
             payload["stop"] = cfg.stop
 
-        if self.tools:
-            payload["tools"] = [t.to_openai_schema() for t in self.tools]
+        active_tools = self._get_active_tools()
+        if active_tools:
+            payload["tools"] = [t.to_openai_schema() for t in active_tools]
+            
+        if stream_callback:
+            payload["stream"] = True
 
         last_exc: Exception | None = None
 
@@ -256,16 +294,81 @@ class AugAgent(BaseModel):
                 async with httpx.AsyncClient(
                     timeout=httpx.Timeout(cfg.timeout),
                 ) as client:
-                    resp = await client.post(url, headers=headers, json=payload)
-
-                    if resp.status_code == 429:
-                        retry_after = float(resp.headers.get("retry-after", str(2 ** attempt)))
-                        logger.log_error(f"Rate-limited (429). Retrying in {retry_after:.1f}s")
-                        await asyncio.sleep(retry_after)
-                        continue
-
-                    resp.raise_for_status()
-                    return ChatCompletion.model_validate(resp.json())
+                    if stream_callback:
+                        async with client.stream("POST", url, headers=headers, json=payload) as resp:
+                            if resp.status_code == 429:
+                                retry_after = float(resp.headers.get("retry-after", str(2 ** attempt)))
+                                logger.log_error(f"Rate-limited (429). Retrying in {retry_after:.1f}s")
+                                await asyncio.sleep(retry_after)
+                                continue
+                            resp.raise_for_status()
+                            
+                            full_content = ""
+                            tool_calls = {}
+                            
+                            async for line in resp.aiter_lines():
+                                if not line or not line.startswith("data: "):
+                                    continue
+                                data_str = line[6:]
+                                if data_str == "[DONE]":
+                                    break
+                                try:
+                                    chunk = json.loads(data_str)
+                                except json.JSONDecodeError:
+                                    continue
+                                
+                                if not chunk.get("choices"):
+                                    continue
+                                delta = chunk["choices"][0].get("delta", {})
+                                
+                                if "content" in delta and delta["content"]:
+                                    chunk_content = delta["content"]
+                                    full_content += chunk_content
+                                    if inspect.iscoroutinefunction(stream_callback):
+                                        await stream_callback(chunk_content)
+                                    else:
+                                        stream_callback(chunk_content)
+                                
+                                if "tool_calls" in delta:
+                                    for tc_chunk in delta["tool_calls"]:
+                                        idx = tc_chunk["index"]
+                                        if idx not in tool_calls:
+                                            tool_calls[idx] = tc_chunk
+                                        else:
+                                            if "function" in tc_chunk:
+                                                if "name" in tc_chunk["function"]:
+                                                    tool_calls[idx]["function"]["name"] += tc_chunk["function"]["name"]
+                                                if "arguments" in tc_chunk["function"]:
+                                                    tool_calls[idx]["function"]["arguments"] += tc_chunk["function"]["arguments"]
+                            
+                            reconstructed = {
+                                "id": "stream",
+                                "object": "chat.completion",
+                                "created": int(time.time()),
+                                "model": self.llm_config.model,
+                                "choices": [{
+                                    "index": 0,
+                                    "message": {
+                                        "role": "assistant",
+                                        "content": full_content if full_content else None,
+                                    },
+                                    "finish_reason": "stop"
+                                }]
+                            }
+                            if tool_calls:
+                                reconstructed["choices"][0]["message"]["tool_calls"] = [tc for tc in tool_calls.values()]
+                            return ChatCompletion.model_validate(reconstructed)
+                    else:
+                        resp = await client.post(url, headers=headers, json=payload)
+    
+                        if resp.status_code == 429:
+                            retry_after = float(resp.headers.get("retry-after", str(2 ** attempt)))
+                            logger.log_error(f"Rate-limited (429). Retrying in {retry_after:.1f}s")
+                            await asyncio.sleep(retry_after)
+                            continue
+    
+                        resp.raise_for_status()
+                        return ChatCompletion.model_validate(resp.json())
 
             except httpx.TimeoutException as exc:
                 last_exc = exc
@@ -289,7 +392,7 @@ class AugAgent(BaseModel):
 
     async def _execute_tool_call(self, tool_call: ChatToolCall, logger: Any) -> str:
         """Dispatch a single tool call to the matching :class:`AugTool`."""
-        tool_map = {t.name: t for t in self.tools}
+        tool_map = {t.name: t for t in self._get_active_tools()}
         tool_impl = tool_map.get(tool_call.function.name)
 
         if tool_impl is None:
@@ -326,8 +429,9 @@ class AugAgent(BaseModel):
         if self.backstory:
             parts.append(f"\nBackstory: {self.backstory}")
 
-        if self.tools:
-            tool_lines = "\n".join(f"  • {t.name} — {t.description}" for t in self.tools)
+        active_tools = self._get_active_tools()
+        if active_tools:
+            tool_lines = "\n".join(f"  • {t.name} — {t.description}" for t in active_tools)
             parts.append(f"\nYou have access to the following tools:\n{tool_lines}")
             parts.append(
                 "\nUse tools when they would help accomplish your goal.  "

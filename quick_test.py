@@ -46,4 +46,4 @@ team = AugTeam(agents=[researcher, writer], tasks=[task_1, task_2])
 result = team.kickoff()
 
 print("\n--- FINAL RESULT ---")
-print(result)
+print(result[-1].output)

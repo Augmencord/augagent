@@ -260,3 +260,26 @@ Tool = AugTool
 
 tool = aug_tool
 """Alias for :func:`aug_tool` — kept for backward compatibility."""
+
+_delegation_registry = {}
+
+def register_agent(agent: Any):
+    """Register an agent for delegation."""
+    _delegation_registry[agent.name] = agent
+
+class DelegateWorkArgs(BaseModel):
+    agent_name: str = Field(description="The role/name of the sub-agent to delegate to.")
+    task_description: str = Field(description="Detailed instructions of what the sub-agent needs to accomplish.")
+
+@aug_tool(args_schema=DelegateWorkArgs)
+async def DelegateWorkTool(agent_name: str, task_description: str) -> str:
+    """Delegate a subtask to another specialized agent. The sub-agent will return its string result."""
+    from augagent.task import Task
+    
+    sub_agent = _delegation_registry.get(agent_name)
+    if not sub_agent:
+        return f"Error: Agent '{agent_name}' not found. Available agents: {list(_delegation_registry.keys())}"
+        
+    sub_task = Task(description=task_description, agent=sub_agent)
+    result = await sub_task.execute()
+    return f"Delegation to {agent_name} complete. Result:\n{result.output}"

@@ -42,6 +42,8 @@ class Process(str, Enum):
     """Orchestration strategy for a :class:`AugTeam`."""
 
     SEQUENTIAL = "sequential"
+    HIERARCHICAL = "hierarchical"
+    GRAPH = "graph"
 
 
 class AugTeam(BaseModel):
@@ -62,9 +64,10 @@ class AugTeam(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     agents: list[AugAgent] = Field(..., min_length=1)
-    tasks: list[AugTask] = Field(..., min_length=1)
+    tasks: list[AugTask] = Field(default_factory=list) # Changed to default_factory to allow pure graph execution
     process: Process = Process.SEQUENTIAL
     verbose: bool = False
+    graph: Any = None # StateGraph reference
 
     # -- public API ---------------------------------------------------------
 
@@ -106,7 +109,12 @@ class AugTeam(BaseModel):
         if self.verbose:
             logger.log_info(f"Team kickoff started with {len(self.tasks)} tasks.")
 
-        results = await self._run_sequential(logger)
+        if self.process == Process.HIERARCHICAL:
+            results = await self._run_hierarchical(logger)
+        elif self.process == Process.GRAPH:
+            results = await self._run_graph(logger, inputs)
+        else:
+            results = await self._run_sequential(logger)
 
         elapsed = time.time() - start
         completed = sum(1 for r in results if r.status == TaskStatus.COMPLETED)
@@ -142,6 +150,59 @@ class AugTeam(BaseModel):
                 logger.log_error(f"Task failed: {result.output}")
 
         return results
+
+    async def _run_hierarchical(self, logger: Any) -> list[TaskResult]:
+        """Execute tasks using a Manager Agent that dynamically routes subtasks."""
+        results: list[TaskResult] = []
+        
+        manager = AugAgent(
+            name="Manager",
+            role="Project Manager",
+            goal="Ensure all tasks are completed accurately and efficiently by delegating to the appropriate specialized agents.",
+            allow_delegation=True,
+            verbose=self.verbose
+        )
+        
+        agent_descriptions = "\n".join([f"- {a.name}: {a.role}. Goal: {a.goal}" for a in self.agents])
+        
+        for task in self.tasks:
+            logger.log_handoff(from_agent="System", to_agent="Manager", task_desc=task.description)
+            
+            prompt = f"You need to accomplish this task:\n{task.description}\n\n"
+            prompt += f"You have the following team members available to delegate sub-tasks to:\n{agent_descriptions}\n\n"
+            prompt += f"Use your delegation tool to delegate work to your team members if needed. Combine their results and provide the final expected output:\n{task.expected_output}"
+            
+            result = await manager.execute(prompt)
+            result = result.model_copy(update={"task_id": task.id})
+            task.status = TaskStatus.COMPLETED if result.status == TaskStatus.COMPLETED else TaskStatus.FAILED
+            task.result = result
+            results.append(result)
+            
+            if result.status == TaskStatus.COMPLETED:
+                logger.log_info(f"Task completed hierarchically. Output length: {len(result.output)} chars.")
+            else:
+                logger.log_error(f"Hierarchical task failed: {result.output}")
+                
+        return results
+
+    async def _run_graph(self, logger: Any, inputs: dict[str, Any] | None = None) -> list[TaskResult]:
+        """Execute tasks using a StateGraph."""
+        if not self.graph:
+            logger.log_error("Process is set to GRAPH but no graph was provided.")
+            return []
+            
+        initial_state = inputs or {}
+        final_state = await self.graph.execute(initial_state)
+        
+        # Return a summary TaskResult with the final state
+        result = TaskResult(
+            task_id="graph_execution",
+            agent_name="GraphEngine",
+            status=TaskStatus.COMPLETED,
+            output=str(final_state),
+            elapsed_seconds=0.0
+        )
+        return [result]
 
     # -- utilities ----------------------------------------------------------
 

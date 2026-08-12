@@ -105,6 +105,15 @@ class AugTask(BaseModel):
                     self.output_json.model_validate_json(result.output)
                 except Exception as exc:
                     logger.log_error(f"JSON validation failed: {exc}")
+                    
+            try:
+                from augagent.memory import global_long_term_memory
+                global_long_term_memory.add_document(
+                    text=f"Task: {self.description}\\nResult: {result.output}",
+                    metadata={"task_id": self.id, "agent": executor.name}
+                )
+            except ImportError:
+                pass
 
             return result
 
@@ -132,6 +141,17 @@ class AugTask(BaseModel):
                         f"### Output from '{ctx_task.description}'\n{ctx_task.result.output}\n"
                     )
             parts.append("---\n")
+            
+        try:
+            from augagent.memory import global_long_term_memory
+            historical_context = global_long_term_memory.search(self.description)
+            if historical_context:
+                parts.append("## Relevant Historical Context (RAG)\n")
+                for item in historical_context:
+                    parts.append(f"- {item['text']}\n")
+                parts.append("---\n")
+        except ImportError:
+            pass
 
         parts.append(f"## Task\n{self.description}\n")
         if self.expected_output:
