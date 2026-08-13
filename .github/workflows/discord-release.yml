@@ -1,0 +1,15 @@
+name: Discord Release Announcement
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Discord Announcement
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          curl -H "Content-Type: application/json" -d "{\"content\": \"🎉 **New Official Release!** 🎉\n\n**${{ github.event.release.name }}** is now live on GitHub!\n\nRead the full release notes here: ${{ github.event.release.html_url }}\"}" $DISCORD_WEBHOOK_URL
