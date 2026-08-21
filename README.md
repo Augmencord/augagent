@@ -46,6 +46,15 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+## 🧪 Testing
+
+AugAgent includes a comprehensive test suite (15+ tests) built with `pytest` and `httpx.MockTransport` covering the ReAct loop, token budgets, HITL, streaming, and audit features.
+
+```bash
+pip install pytest pytest-asyncio httpx
+pytest tests/ -v
+```
+
 ## 📖 Documentation
 Please refer to the `docs/` directory for our complete API reference and architectural guides.
 
