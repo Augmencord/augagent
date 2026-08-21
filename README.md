@@ -1,4 +1,4 @@
-# AugAgent 🤖
+# AugAgent
 
 [![PyPI version](https://badge.fury.io/py/augagent.svg)](https://badge.fury.io/py/augagent)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -6,7 +6,7 @@
 
 **AugAgent** is an enterprise-grade multi-agent orchestration framework designed for resilience, observability, and compliance.
 
-## ✨ Features
+## Features
 
 - **Resilience**: Built-in multi-model fallback routing and retries across OpenAI, Ollama, and LiteLLM compatible APIs.
 - **Persistence**: Pluggable state checkpointers (SQLite & ChromaDB) for durable agent memory.
@@ -14,7 +14,7 @@
 - **Assurance**: OpenTelemetry logging and strict Pydantic token budgets.
 - **Security**: Immutable JSONL audit logging with automatic PII redaction and FastAPI RBAC.
 
-## 🚀 Quickstart
+## Quickstart
 
 ### Installation
 
@@ -46,14 +46,14 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-## 📖 Documentation
+## Documentation
 Please refer to the `docs/` directory for our complete API reference and architectural guides.
 
-## 🤝 Contributing
+## Contributing
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how to help out.
 
-## 🔐 Security
+## Security
 See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
-## 📄 License
+## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
