@@ -269,6 +269,10 @@ class AgentConfig(BaseModel):
         description="Rich context that shapes the agent's behaviour.",
     )
     llm_config: LLMConfig = Field(default_factory=LLMConfig)
+    fallback_models: list[LLMConfig] = Field(
+        default_factory=list,
+        description="List of LLMConfigs to fallback to if the primary model fails."
+    )
     max_iterations: int = Field(
         default=25,
         ge=1,

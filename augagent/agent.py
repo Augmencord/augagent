@@ -34,6 +34,7 @@ import asyncio
 import json
 import time
 import inspect
+import uuid
 from typing import Any
 
 import httpx
@@ -82,6 +83,7 @@ class AugAgent(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     # ── identity ──────────────────────────────────────────────────────────
+    id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     name: str = Field(..., min_length=1, max_length=128)
     role: str
     goal: str
@@ -89,6 +91,7 @@ class AugAgent(BaseModel):
 
     # ── LLM configuration ────────────────────────────────────────────────
     llm_config: LLMConfig = Field(default_factory=LLMConfig)
+    fallback_models: list[LLMConfig] = Field(default_factory=list)
 
     # ── capabilities ─────────────────────────────────────────────────────
     tools: list[AugTool] = Field(default_factory=list)
@@ -99,6 +102,7 @@ class AugAgent(BaseModel):
     allow_delegation: bool = False
     require_human_approval: bool = False
     token_budget: TokenBudget | None = None
+    checkpointer: Any | None = Field(default=None, exclude=True)
 
     # ── internal state (private, excluded from serialisation) ─────────────
     _message_history: list[dict[str, Any]] = PrivateAttr(default_factory=list)
@@ -140,6 +144,11 @@ class AugAgent(BaseModel):
         with logger.start_span("agent_execute", attributes={"agent.name": self.name, "agent.model": self.llm_config.model}) as span:
             if self.verbose:
                 logger.log_info(f"[{self.name}] starting execution with {self.llm_config.model}")
+            
+            if self.checkpointer:
+                state = self.checkpointer.load(self.id)
+                if state and "message_history" in state:
+                    self._message_history = state["message_history"]
     
             try:
                 output, usage, iterations = await self._react_loop(prompt, message_history, logger, stream_callback)
@@ -167,7 +176,7 @@ class AugAgent(BaseModel):
                 elapsed = time.time() - start
                 logger.log_error(f"[{self.name}] execution failed: {exc}")
                 span.record_exception(exc)
-    
+                span.set_attribute("error", True)
                 return TaskResult(
                     task_id="",
                     agent_name=self.name,
@@ -175,6 +184,11 @@ class AugAgent(BaseModel):
                     output=f"Agent execution failed: {exc}",
                     elapsed_seconds=round(elapsed, 3),
                 )
+            finally:
+                if self.checkpointer:
+                    self.checkpointer.save(self.id, {"message_history": self._message_history})
+                self._message_history.clear()
+                self._active_client = None
 
     # ══════════════════════════════════════════════════════════════════════
     # REACT LOOP  (Reason → Act → Observe)
@@ -289,8 +303,27 @@ class AugAgent(BaseModel):
         logger: Any,
         stream_callback: Any | None = None,
     ) -> ChatCompletion:
-        """POST to ``/chat/completions`` with retry + exponential backoff."""
-        cfg = self.llm_config
+        """POST to ``/chat/completions`` with fallback routing."""
+        models_to_try = [self.llm_config] + self.fallback_models
+        
+        last_exc: Exception | None = None
+        for cfg in models_to_try:
+            try:
+                return await self._call_llm_single(cfg, messages, logger, stream_callback)
+            except Exception as exc:
+                last_exc = exc
+                logger.log_error(f"Model '{cfg.model}' failed: {exc}. Trying next fallback...")
+                
+        raise RuntimeError(f"All models failed. Last exception: {last_exc}")
+
+    async def _call_llm_single(
+        self,
+        cfg: LLMConfig,
+        messages: list[dict[str, Any]],
+        logger: Any,
+        stream_callback: Any | None = None,
+    ) -> ChatCompletion:
+        """POST to ``/chat/completions`` with retry + exponential backoff for a specific config."""
         url = f"{cfg.base_url.rstrip('/')}/chat/completions"
         api_key = cfg.resolve_api_key()
 
@@ -377,7 +410,7 @@ class AugAgent(BaseModel):
                             "id": "stream",
                             "object": "chat.completion",
                             "created": int(time.time()),
-                            "model": self.llm_config.model,
+                            "model": cfg.model,
                             "choices": [{
                                 "index": 0,
                                 "message": {
@@ -509,6 +542,7 @@ class AugAgent(BaseModel):
             goal=self.goal,
             backstory=self.backstory,
             llm_config=self.llm_config,
+            fallback_models=self.fallback_models,
             max_iterations=self.max_iterations,
             allow_delegation=self.allow_delegation,
             verbose=self.verbose,
@@ -528,6 +562,7 @@ class AugAgent(BaseModel):
             goal=config.goal,
             backstory=config.backstory,
             llm_config=config.llm_config,
+            fallback_models=config.fallback_models,
             max_iterations=config.max_iterations,
             allow_delegation=config.allow_delegation,
             verbose=config.verbose,
