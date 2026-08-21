@@ -6,3 +6,5 @@ venv/
 *.whl
 *.egg-info/
 .pytest_cache/
+.chroma_db/
+*.dist-info/
