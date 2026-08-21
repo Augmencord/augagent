@@ -1,0 +1,15 @@
+site_name: AugAgent
+site_description: Enterprise-grade multi-agent orchestration framework
+theme:
+  name: material
+  palette:
+    primary: deep purple
+    accent: deep purple
+
+nav:
+  - Home: index.md
+  - Core Concepts:
+    - Agents: concepts/agents.md
+    - Tasks: concepts/tasks.md
+    - Tools: concepts/tools.md
+  - API Reference: api_reference.md
