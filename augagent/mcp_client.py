@@ -77,3 +77,5 @@ class MCPToolAdapter:
                     aug_tools.append(aug_tool)
                     
         return aug_tools
+
+# EOF

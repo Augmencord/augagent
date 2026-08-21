@@ -304,3 +304,5 @@ class TaskResult(BaseModel):
     elapsed_seconds: float = 0.0
     iterations: int = 0
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+# EOF

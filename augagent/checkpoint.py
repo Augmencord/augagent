@@ -62,3 +62,5 @@ class SQLiteCheckpointer(BaseCheckpointer):
             if row:
                 return json.loads(row[0])
             return None
+
+# EOF

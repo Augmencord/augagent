@@ -313,3 +313,5 @@ class PluginRegistry:
                     # Silently skip broken plugins or log them if a logger was available here
                     pass
         return tools
+
+# EOF
