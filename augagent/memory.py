@@ -2,7 +2,11 @@
 
 from pydantic import BaseModel, Field
 from typing import Any, List
-import chromadb
+try:
+    import chromadb
+    HAS_CHROMADB = True
+except ImportError:
+    HAS_CHROMADB = False
 
 class ShortTermMemory(BaseModel):
     """In-memory sliding window of recent task context."""
@@ -17,10 +21,13 @@ class ShortTermMemory(BaseModel):
 class LongTermMemory:
     """Vector database abstraction using ChromaDB for persistent storage and RAG."""
     def __init__(self, collection_name: str = "augagent_kb", persist_directory: str = "./.chroma_db"):
+        if not HAS_CHROMADB:
+            raise ImportError("chromadb is not installed. Please install with `pip install augagent[memory]`")
         self.client = chromadb.PersistentClient(path=persist_directory)
         self.collection = self.client.get_or_create_collection(name=collection_name)
         
     def add_document(self, text: str, metadata: dict[str, Any] = None, doc_id: str = None):
+        if not HAS_CHROMADB: return
         if not doc_id:
             import uuid
             doc_id = str(uuid.uuid4())
@@ -32,18 +39,21 @@ class LongTermMemory:
         )
         
     def search(self, query: str, top_k: int = 3) -> List[dict[str, Any]]:
+        if not HAS_CHROMADB: return []
         results = self.collection.query(
             query_texts=[query],
             n_results=top_k
         )
         
         docs = []
-        if results and results["documents"] and len(results["documents"]) > 0:
+        if results and results.get("documents") and len(results["documents"]) > 0:
             for i, doc in enumerate(results["documents"][0]):
-                meta = results["metadatas"][0][i] if results["metadatas"] else {}
+                meta = results["metadatas"][0][i] if results.get("metadatas") else {}
                 docs.append({"text": doc, "metadata": meta})
                 
         return docs
 
 # Global instance for demonstration purposes
-global_long_term_memory = LongTermMemory()
+global_long_term_memory = None
+if HAS_CHROMADB:
+    global_long_term_memory = LongTermMemory()
