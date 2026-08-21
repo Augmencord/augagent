@@ -25,9 +25,9 @@ function App() {
           const newMsgs = [...prev]
           const lastMsg = newMsgs[newMsgs.length - 1]
           if (lastMsg && lastMsg.role === 'assistant' && !lastMsg.final) {
-            lastMsg.content += data.content
+            newMsgs[newMsgs.length - 1] = { ...lastMsg, content: lastMsg.content + data.content }
           } else {
-            newMsgs.push({ role: 'assistant', content: data.content })
+            newMsgs.push({ role: 'assistant', content: data.content, final: false })
           }
           return newMsgs
         })
@@ -50,7 +50,16 @@ function App() {
     setMessages(prev => [...prev, { role: 'user', content: prompt }])
     ws.current.send(JSON.stringify({ 
       prompt, 
-      agent_config: { name: 'AugHomeAgent', role: 'Assistant', model: 'gpt-4o' } 
+      agent_config: { 
+        name: 'AugHomeAgent', 
+        role: 'Assistant', 
+        goal: 'Assist the user in their IDE.',
+        llm_config: { 
+          model: 'qwen2.5-coder:7b', 
+          base_url: 'http://localhost:11434/v1',
+          api_key: 'ollama' 
+        } 
+      } 
     }))
     setPrompt('')
   }
