@@ -1,13 +1,26 @@
-from fastapi import FastAPI, HTTPException, WebSocket
+from fastapi import FastAPI, HTTPException, WebSocket, Security, Depends
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 from typing import List, Dict, Any
 import asyncio
 import json
+import os
 
 from augagent.models import AgentConfig, TaskResult, LLMConfig
 from augagent.agent import AugAgent
 from augagent.task import AugTask
 from augagent.team import AugTeam
+
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+def get_api_key(api_key: str = Security(api_key_header)) -> str:
+    expected_key = os.getenv("AUGAGENT_API_KEY")
+    if expected_key and api_key != expected_key:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing API Key",
+        )
+    return api_key or ""
 
 app = FastAPI(title="AugAgent API", description="REST and WebSocket interfaces for AugAgent orchestration")
 
@@ -24,7 +37,7 @@ class KickoffRequest(BaseModel):
     inputs: Dict[str, Any] = {}
 
 @app.post("/kickoff", response_model=List[TaskResult])
-async def kickoff(request: KickoffRequest):
+async def kickoff(request: KickoffRequest, api_key: str = Depends(get_api_key)):
     """
     Execute a team of agents sequentially or hierarchically based on the request.
     """
@@ -61,8 +74,17 @@ async def websocket_stream(websocket: WebSocket):
     """
     WebSocket endpoint for real-time streaming of an agent's reasoning process.
     Expected message format: {"prompt": "...", "agent_config": {...}}
+    Authentication is done via the 'api_key' query parameter.
     """
     await websocket.accept()
+    
+    expected_key = os.getenv("AUGAGENT_API_KEY")
+    api_key = websocket.query_params.get("api_key")
+    if expected_key and api_key != expected_key:
+        await websocket.send_text(json.dumps({"type": "error", "message": "Invalid API Key"}))
+        await websocket.close(code=1008)
+        return
+
     try:
         data = await websocket.receive_text()
         req = json.loads(data)
