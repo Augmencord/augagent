@@ -1,8 +1,11 @@
 """Terminal command execution tools for AugAgent."""
 
 import subprocess
+import shlex
 from pydantic import BaseModel, Field
 from augagent.tools import aug_tool
+
+ALLOWED_COMMANDS = {"ls", "cat", "echo", "python", "node", "dir", "type", "git"}
 
 class RunCommandArgs(BaseModel):
     command: str = Field(description="The shell command to execute.")
@@ -12,10 +15,14 @@ class RunCommandArgs(BaseModel):
 def run_terminal_command(command: str, cwd: str) -> str:
     """Run a terminal command securely in a subprocess and return its output."""
     try:
+        parsed_cmd = shlex.split(command)
+        if not parsed_cmd or parsed_cmd[0] not in ALLOWED_COMMANDS:
+            return f"Error: Command not permitted by allowlist. Attempted to run: {parsed_cmd[0] if parsed_cmd else 'empty command'}"
+
         result = subprocess.run(
-            command,
+            parsed_cmd,
             cwd=cwd,
-            shell=True,
+            shell=False,
             capture_output=True,
             text=True,
             timeout=120

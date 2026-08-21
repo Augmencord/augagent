@@ -1,7 +1,31 @@
+Metadata-Version: 2.4
+Name: augagent
+Version: 1.0.0
+Summary: An enterprise-grade autonomous ReAct agent framework with token streaming and hierarchical orchestration.
+Home-page: https://github.com/augmencord/augagent
+Author: Augmencord Research
+Author-email: research@augmencord.com
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: pydantic>=2.0.0
+Requires-Dist: httpx>=0.24.0
+Requires-Dist: chromadb>=0.4.0
+Dynamic: author
+Dynamic: author-email
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: home-page
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
+
 # AugAgent
 
 An enterprise-grade autonomous ReAct agent framework with token streaming, hierarchical orchestration, and vector memory.
-
 
 ## Features
 - **Real-Time Token Streaming**: Built heavily on `httpx.AsyncClient` for blazing fast, token-by-token UI updates.
@@ -35,4 +59,3 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 ```
-

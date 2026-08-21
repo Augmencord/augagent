@@ -90,19 +90,19 @@ class AugTeam(BaseModel):
             import concurrent.futures
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                return pool.submit(asyncio.run, self._run()).result()
-        return asyncio.run(self._run())
+                return pool.submit(asyncio.run, self._run(inputs)).result()
+        return asyncio.run(self._run(inputs))
 
     async def akickoff(self, inputs: dict[str, Any] | None = None) -> list[TaskResult]:
         """Async version of :meth:`kickoff`."""
         if inputs:
             for task in self.tasks:
                 task.interpolate_inputs(inputs)
-        return await self._run()
+        return await self._run(inputs)
 
     # -- orchestration strategies -------------------------------------------
 
-    async def _run(self) -> list[TaskResult]:
+    async def _run(self, inputs: dict[str, Any] | None = None) -> list[TaskResult]:
         logger = get_logger()
         start = time.time()
 
