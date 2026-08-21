@@ -8,10 +8,29 @@ version = "1.0.0"
 description = "An enterprise-grade autonomous ReAct agent framework"
 readme = "README.md"
 requires-python = ">=3.10"
+authors = [
+  {name = "Augmencord", email = "augmencord@gmail.com"}
+]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
 dependencies = [
     "pydantic>=2.0.0",
     "httpx>=0.24.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Augmencord/augagent"
+Repository = "https://github.com/Augmencord/augagent.git"
+Changelog = "https://github.com/Augmencord/augagent/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 memory = ["chromadb>=0.4.0"]
