@@ -283,3 +283,33 @@ async def DelegateWorkTool(agent_name: str, task_description: str) -> str:
     sub_task = Task(description=task_description, agent=sub_agent)
     result = await sub_task.execute()
     return f"Delegation to {agent_name} complete. Result:\n{result.output}"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Plugin Architecture
+# ═══════════════════════════════════════════════════════════════════════════
+
+class PluginRegistry:
+    """Dynamically loads AugTools from external packages."""
+    
+    @classmethod
+    def load_plugins(cls) -> list[AugTool]:
+        """Scan installed packages starting with 'augagent_plugin_' and load their tools."""
+        import importlib
+        import pkgutil
+        
+        tools = []
+        # Discover all modules in the environment
+        for module_info in pkgutil.iter_modules():
+            if module_info.name.startswith("augagent_plugin_"):
+                try:
+                    module = importlib.import_module(module_info.name)
+                    # Look for AugTool instances in the module
+                    for attr_name in dir(module):
+                        attr = getattr(module, attr_name)
+                        if isinstance(attr, AugTool):
+                            tools.append(attr)
+                except Exception as e:
+                    # Silently skip broken plugins or log them if a logger was available here
+                    pass
+        return tools
