@@ -22,14 +22,15 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 
-[project.urls]
-Homepage = "https://github.com/Augmencord/augagent"
-Repository = "https://github.com/Augmencord/augagent.git"
-Changelog = "https://github.com/Augmencord/augagent/blob/main/CHANGELOG.md"
 dependencies = [
     "pydantic>=2.0.0",
     "httpx>=0.24.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Augmencord/augagent"
+Repository = "https://github.com/Augmencord/augagent.git"
+Changelog = "https://github.com/Augmencord/augagent/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 memory = ["chromadb>=0.4.0"]
