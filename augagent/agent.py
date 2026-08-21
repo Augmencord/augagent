@@ -260,6 +260,12 @@ class AugAgent(BaseModel):
                     tool_name=tc.function.name,
                     args=tc.function.arguments[:200]
                 )
+                from augagent.audit import audit
+                audit.log_event(
+                    event_type="TOOL_EXECUTION",
+                    actor=self.name,
+                    payload={"tool": tc.function.name, "arguments": tc.function.arguments}
+                )
                 
                 if self.require_human_approval:
                     logger.log_info(f"[{self.name}] HITL interruption requested for {tc.function.name}")
