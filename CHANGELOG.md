@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.0.0] - 2026-08-21
+## [1.1.0] - 2026-08-21
 ### Added
 - Multi-model fallback routing and retry mechanisms.
 - Support for OpenAI, Ollama, vLLM, and LiteLLM compatible endpoints.
