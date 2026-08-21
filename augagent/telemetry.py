@@ -61,3 +61,5 @@ _DEFAULT_LOGGER = AgentLogger()
 
 def get_logger() -> AgentLogger:
     return _DEFAULT_LOGGER
+
+# EOF
