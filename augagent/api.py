@@ -1,28 +1,75 @@
-from fastapi import FastAPI, HTTPException, WebSocket, Security, Depends
-from fastapi.security import APIKeyHeader
+from fastapi import FastAPI, HTTPException, WebSocket, Security, Depends, Request
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Callable
 import asyncio
 import json
 import os
+import jwt
+from datetime import datetime
 
 from augagent.models import AgentConfig, TaskResult, LLMConfig
 from augagent.agent import AugAgent
 from augagent.task import AugTask
 from augagent.team import AugTeam
 
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+# RBAC Configuration
+JWT_SECRET = os.getenv("AUGAGENT_JWT_SECRET", "super-secret-default-key")
+JWT_ALGORITHM = "HS256"
 
-def get_api_key(api_key: str = Security(api_key_header)) -> str:
-    expected_key = os.getenv("AUGAGENT_API_KEY")
-    if expected_key and api_key != expected_key:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid or missing API Key",
+security = HTTPBearer()
+
+class UserUser(BaseModel):
+    username: str
+    roles: List[str]
+    tenant_id: str
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Security(security)) -> UserUser:
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return UserUser(
+            username=payload.get("sub", ""),
+            roles=payload.get("roles", []),
+            tenant_id=payload.get("tenant_id", "default")
         )
-    return api_key or ""
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token has expired")
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
-app = FastAPI(title="AugAgent API", description="REST and WebSocket interfaces for AugAgent orchestration")
+def require_role(required_role: str) -> Callable:
+    def role_checker(user: UserUser = Depends(get_current_user)):
+        if required_role not in user.roles and "admin" not in user.roles:
+            raise HTTPException(status_code=403, detail=f"Role '{required_role}' required")
+        return user
+    return role_checker
+
+app = FastAPI(title="AugAgent API with RBAC", description="REST and WebSocket interfaces for AugAgent orchestration")
+
+# Basic in-memory rate limiting per tenant
+tenant_request_counts = {}
+
+@app.middleware("http")
+async def tenant_rate_limit_middleware(request: Request, call_next):
+    # This is a naive implementation for demonstration purposes
+    # In production, use Redis for distributed rate limiting
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1]
+        try:
+            payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+            tenant_id = payload.get("tenant_id", "default")
+            
+            # Simple rate limiting: 100 reqs per process lifetime (just as an example)
+            tenant_request_counts[tenant_id] = tenant_request_counts.get(tenant_id, 0) + 1
+            if tenant_request_counts[tenant_id] > 1000:
+                return HTTPException(status_code=429, detail="Rate limit exceeded for tenant")
+        except:
+            pass
+            
+    response = await call_next(request)
+    return response
 
 class TaskRequest(BaseModel):
     description: str
@@ -37,9 +84,10 @@ class KickoffRequest(BaseModel):
     inputs: Dict[str, Any] = {}
 
 @app.post("/kickoff", response_model=List[TaskResult])
-async def kickoff(request: KickoffRequest, api_key: str = Depends(get_api_key)):
+async def kickoff(request: KickoffRequest, user: UserUser = Depends(require_role("operator"))):
     """
-    Execute a team of agents sequentially or hierarchically based on the request.
+    Execute a team of agents sequentially or hierarchically.
+    Requires 'operator' role.
     """
     try:
         agents_map = {}
@@ -62,6 +110,8 @@ async def kickoff(request: KickoffRequest, api_key: str = Depends(get_api_key)):
             tasks.append(task)
             
         team = AugTeam(agents=agents, tasks=tasks, process=request.process)
+        # Pass tenant ID for namespaced execution context
+        request.inputs["tenant_id"] = user.tenant_id
         results = await team.akickoff(request.inputs)
         return results
     except HTTPException:
@@ -74,18 +124,24 @@ async def websocket_stream(websocket: WebSocket):
     """
     WebSocket endpoint for real-time streaming of an agent's reasoning process.
     Expected message format: {"prompt": "...", "agent_config": {...}}
-    Authentication is done via the 'api_key' query parameter.
+    Authentication is done via the 'token' query parameter (JWT).
     """
     await websocket.accept()
     
-    expected_key = os.getenv("AUGAGENT_API_KEY")
-    api_key = websocket.query_params.get("api_key")
-    if expected_key and api_key != expected_key:
-        await websocket.send_text(json.dumps({"type": "error", "message": "Invalid API Key"}))
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.send_text(json.dumps({"type": "error", "message": "Missing token"}))
         await websocket.close(code=1008)
         return
 
     try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        roles = payload.get("roles", [])
+        if "viewer" not in roles and "admin" not in roles and "operator" not in roles:
+            await websocket.send_text(json.dumps({"type": "error", "message": "Insufficient permissions"}))
+            await websocket.close(code=1008)
+            return
+            
         data = await websocket.receive_text()
         req = json.loads(data)
         
@@ -101,6 +157,9 @@ async def websocket_stream(websocket: WebSocket):
         result = await agent.execute(prompt, stream_callback=stream_callback)
         await websocket.send_text(json.dumps({"type": "result", "output": result.output}))
         
+    except jwt.PyJWTError:
+        await websocket.send_text(json.dumps({"type": "error", "message": "Invalid token"}))
+        await websocket.close(code=1008)
     except Exception as e:
         await websocket.send_text(json.dumps({"type": "error", "message": str(e)}))
     finally:

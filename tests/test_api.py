@@ -6,9 +6,9 @@ from augagent.cli import app as cli_app
 client = TestClient(app)
 
 def test_api_kickoff_validation():
-    """Test that the /kickoff endpoint returns 422 on invalid payload."""
+    """Test that the /kickoff endpoint returns 401 on missing auth."""
     response = client.post("/kickoff", json={})
-    assert response.status_code == 422
+    assert response.status_code == 401
 
 def test_cli_help():
     """Test that the CLI application loads and shows help."""
