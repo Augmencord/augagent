@@ -1,38 +1,59 @@
-# AugAgent
+# AugAgent 🤖
 
-An enterprise-grade autonomous ReAct agent framework with token streaming, hierarchical orchestration, and vector memory.
+[![PyPI version](https://badge.fury.io/py/augagent.svg)](https://badge.fury.io/py/augagent)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
+**AugAgent** is an enterprise-grade multi-agent orchestration framework designed for resilience, observability, and compliance.
 
-## Features
-- **Real-Time Token Streaming**: Built heavily on `httpx.AsyncClient` for blazing fast, token-by-token UI updates.
-- **Hierarchical Orchestration**: Includes `DelegateWorkTool` out-of-the-box, allowing "Manager" agents to spin up specialized sub-agents.
-- **RAG & Memory**: Natively integrates ChromaDB for sliding-window and long-term vector memory abstractions.
-- **Human-in-the-Loop**: Supports `require_human_approval` to yield payloads to an external UI for approval before code execution.
-- **Provider Agnostic**: Use OpenAI, Anthropic, or local open-source models via Ollama.
+## ✨ Features
 
-## Installation
+- **Resilience**: Built-in multi-model fallback routing and retries across OpenAI, Ollama, and LiteLLM compatible APIs.
+- **Persistence**: Pluggable state checkpointers (SQLite & ChromaDB) for durable agent memory.
+- **Extensibility**: Native MCP (Model Context Protocol) client wrapper to inject dynamic tools.
+- **Assurance**: OpenTelemetry logging and strict Pydantic token budgets.
+- **Security**: Immutable JSONL audit logging with automatic PII redaction and FastAPI RBAC.
+
+## 🚀 Quickstart
+
+### Installation
+
 ```bash
-pip install augagent
+pip install augagent[api,telemetry,mcp]
 ```
 
-## Quick Start
+### Basic Usage
+
 ```python
 import asyncio
-from augagent import Agent, LLMConfig
+from augagent.agent import AugAgent
+from augagent.models import AgentConfig, LLMConfig
 
 async def main():
-    config = LLMConfig(model="qwen2.5-coder:7b")
-    agent = Agent(
-        name="AugHome-Root", 
-        role="Senior AI Engineer", 
-        goal="Handle IDE requests", 
-        llm_config=config
+    agent = AugAgent(
+        config=AgentConfig(
+            name="ResearchBot",
+            role="Analyst",
+            goal="Analyze technical data",
+            llm_config=LLMConfig(model="gpt-4o")
+        )
     )
     
-    result = await agent.execute("Write a python script to calculate fibonacci numbers.")
+    result = await agent.run("What are the benefits of MCP?")
     print(result.output)
 
 if __name__ == "__main__":
     asyncio.run(main())
 ```
 
+## 📖 Documentation
+Please refer to the `docs/` directory for our complete API reference and architectural guides.
+
+## 🤝 Contributing
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to help out.
+
+## 🔐 Security
+See [SECURITY.md](SECURITY.md) for vulnerability reporting.
+
+## 📄 License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
