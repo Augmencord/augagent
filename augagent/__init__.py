@@ -47,7 +47,8 @@ from augagent.models import (
 from augagent.task import AugTask, Task
 from augagent.team import AugTeam, Process, Team
 from augagent.telemetry import AgentLogger, get_logger
-from augagent.tools import AugTool, Tool, aug_tool, tool
+from augagent.tools import AugTool, Tool, aug_tool, tool, PluginRegistry
+from augagent.mcp_client import MCPToolAdapter
 
 __version__ = "1.0.0"
 
@@ -60,6 +61,8 @@ __all__ = [
     # Tools
     "AugTool",
     "aug_tool",
+    "PluginRegistry",
+    "MCPToolAdapter",
     # Backward compatibility aliases
     "Agent",
     "Task",
