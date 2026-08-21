@@ -63,6 +63,7 @@ class AugTask(BaseModel):
     agent: AugAgent | None = None
     context: list["AugTask"] = Field(default_factory=list)
     async_execution: bool = False
+    retries: int = Field(default=0, ge=0)
     output_json: Any = Field(default=None, exclude=True, repr=False)
 
     # -- runtime state (excluded from serialisation) ------------------------
@@ -79,6 +80,7 @@ class AugTask(BaseModel):
         ValueError
             If no agent is assigned or provided.
         """
+        import asyncio
         executor = agent or self.agent
         if executor is None:
             raise ValueError(
@@ -93,7 +95,26 @@ class AugTask(BaseModel):
         prompt = self._build_prompt()
 
         try:
-            result = await executor.execute(prompt)
+            result = None
+            last_err = None
+            
+            for attempt in range(self.retries + 1):
+                try:
+                    result = await executor.execute(prompt)
+                    if result.status == TaskStatus.COMPLETED:
+                        break
+                    last_err = result.output
+                except Exception as exc:
+                    last_err = str(exc)
+
+                if attempt < self.retries:
+                    backoff = min(2 ** attempt, 30)
+                    logger.log_error(f"Task '{self.id}' failed. Retrying in {backoff}s... ({attempt+1}/{self.retries})")
+                    await asyncio.sleep(backoff)
+
+            if result is None or result.status != TaskStatus.COMPLETED:
+                raise Exception(f"Failed after {self.retries} retries. Last error: {last_err}")
+
             # Re-stamp with this task's id
             result = result.model_copy(update={"task_id": self.id})
             self.result = result
@@ -108,10 +129,11 @@ class AugTask(BaseModel):
                     
             try:
                 from augagent.memory import global_long_term_memory
-                global_long_term_memory.add_document(
-                    text=f"Task: {self.description}\\nResult: {result.output}",
-                    metadata={"task_id": self.id, "agent": executor.name}
-                )
+                if global_long_term_memory is not None:
+                    global_long_term_memory.add_document(
+                        text=f"Task: {self.description}\\nResult: {result.output}",
+                        metadata={"task_id": self.id, "agent": executor.name}
+                    )
             except ImportError:
                 pass
 
@@ -119,12 +141,12 @@ class AugTask(BaseModel):
 
         except Exception as exc:
             self.status = TaskStatus.FAILED
-            logger.log_error(f"Task failed: {exc}")
+            logger.log_error(f"Task execution failed: {exc}")
             return TaskResult(
                 task_id=self.id,
                 agent_name=executor.name,
                 status=TaskStatus.FAILED,
-                output=f"Task failed: {exc}",
+                output=f"Task execution failed: {exc}",
             )
 
     # -- internals ----------------------------------------------------------
@@ -144,12 +166,13 @@ class AugTask(BaseModel):
             
         try:
             from augagent.memory import global_long_term_memory
-            historical_context = global_long_term_memory.search(self.description)
-            if historical_context:
-                parts.append("## Relevant Historical Context (RAG)\n")
-                for item in historical_context:
-                    parts.append(f"- {item['text']}\n")
-                parts.append("---\n")
+            if global_long_term_memory is not None:
+                historical_context = global_long_term_memory.search(self.description)
+                if historical_context:
+                    parts.append("## Relevant Historical Context (RAG)\n")
+                    for item in historical_context:
+                        parts.append(f"- {item['text']}\n")
+                    parts.append("---\n")
         except ImportError:
             pass
 

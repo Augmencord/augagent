@@ -69,6 +69,8 @@ class AugTeam(BaseModel):
     verbose: bool = False
     graph: Any = None # StateGraph reference
 
+    manager_llm_config: Any = Field(default=None)
+
     # -- public API ---------------------------------------------------------
 
     def kickoff(self, inputs: dict[str, Any] | None = None) -> list[TaskResult]:
@@ -126,28 +128,57 @@ class AugTeam(BaseModel):
         return results
 
     async def _run_sequential(self, logger: Any) -> list[TaskResult]:
-        """Execute tasks one-by-one, passing outputs as context to the next."""
+        """Execute tasks one-by-one, passing outputs as context to the next.
+        Tasks with async_execution=True are grouped and executed concurrently."""
         results: list[TaskResult] = []
-
-        for i, task in enumerate(self.tasks):
-            # Automatically chain context: if this isn't the first task, and the previous task
-            # successfully generated output, append it to this task's context.
-            if i > 0 and results[-1].status == TaskStatus.COMPLETED:
-                prev_task = self.tasks[i - 1]
-                if prev_task not in task.context:
-                    task.context.append(prev_task)
-
-            executor = task.agent or self.agents[0]
-
-            logger.log_handoff(from_agent="Manager", to_agent=executor.name, task_desc=task.description)
-
-            result = await task.execute(agent=executor)
-            results.append(result)
-
-            if result.status == TaskStatus.COMPLETED:
-                logger.log_info(f"Task completed successfully. Output length: {len(result.output)} chars.")
+        
+        i = 0
+        while i < len(self.tasks):
+            task = self.tasks[i]
+            
+            if task.async_execution:
+                async_batch = [task]
+                j = i + 1
+                while j < len(self.tasks) and self.tasks[j].async_execution:
+                    async_batch.append(self.tasks[j])
+                    j += 1
+                
+                logger.log_info(f"Executing batch of {len(async_batch)} tasks concurrently...")
+                coros = []
+                for t in async_batch:
+                    if i > 0 and results and results[-1].status == TaskStatus.COMPLETED:
+                        prev_task = self.tasks[i - 1]
+                        if prev_task not in t.context:
+                            t.context.append(prev_task)
+                            
+                    executor = t.agent or self.agents[0]
+                    logger.log_handoff(from_agent="Manager", to_agent=executor.name, task_desc=t.description)
+                    coros.append(t.execute(agent=executor))
+                
+                batch_results = await asyncio.gather(*coros, return_exceptions=True)
+                for r in batch_results:
+                    if isinstance(r, Exception):
+                        results.append(TaskResult(task_id="", agent_name="", status=TaskStatus.FAILED, output=str(r)))
+                    else:
+                        results.append(r)
+                i = j
             else:
-                logger.log_error(f"Task failed: {result.output}")
+                if i > 0 and results and results[-1].status == TaskStatus.COMPLETED:
+                    prev_task = self.tasks[i - 1]
+                    if prev_task not in task.context:
+                        task.context.append(prev_task)
+
+                executor = task.agent or self.agents[0]
+                logger.log_handoff(from_agent="Manager", to_agent=executor.name, task_desc=task.description)
+                
+                result = await task.execute(agent=executor)
+                results.append(result)
+
+                if result.status == TaskStatus.COMPLETED:
+                    logger.log_info(f"Task completed successfully. Output length: {len(result.output)} chars.")
+                else:
+                    logger.log_error(f"Task failed: {result.output}")
+                i += 1
 
         return results
 
@@ -155,13 +186,17 @@ class AugTeam(BaseModel):
         """Execute tasks using a Manager Agent that dynamically routes subtasks."""
         results: list[TaskResult] = []
         
-        manager = AugAgent(
-            name="Manager",
-            role="Project Manager",
-            goal="Ensure all tasks are completed accurately and efficiently by delegating to the appropriate specialized agents.",
-            allow_delegation=True,
-            verbose=self.verbose
-        )
+        manager_kwargs = {
+            "name": "Manager",
+            "role": "Project Manager",
+            "goal": "Ensure all tasks are completed accurately and efficiently by delegating to the appropriate specialized agents.",
+            "allow_delegation": True,
+            "verbose": self.verbose
+        }
+        if self.manager_llm_config:
+            manager_kwargs["llm_config"] = self.manager_llm_config
+            
+        manager = AugAgent(**manager_kwargs)
         
         agent_descriptions = "\n".join([f"- {a.name}: {a.role}. Goal: {a.goal}" for a in self.agents])
         

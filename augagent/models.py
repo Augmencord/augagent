@@ -128,6 +128,16 @@ class LLMConfig(BaseModel):
         return key
 
 
+class TokenBudget(BaseModel):
+    """Hard limits on tokens for a single agent execution run."""
+    max_input_tokens: int | None = Field(default=None, ge=1)
+    max_output_tokens: int | None = Field(default=None, ge=1)
+    max_total_tokens: int | None = Field(default=None, ge=1)
+
+class TokenBudgetExceededError(Exception):
+    """Raised when an agent exceeds its token budget."""
+    pass
+
 # ═══════════════════════════════════════════════════════════════════════════
 # CHAT COMPLETION RESPONSE SCHEMAS  (OpenAI-compatible)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -269,6 +279,7 @@ class AgentConfig(BaseModel):
         description="Whether this agent may delegate sub-tasks to teammates.",
     )
     verbose: bool = False
+    token_budget: TokenBudget | None = None
 
 
 # ---------------------------------------------------------------------------
