@@ -1,6 +1,6 @@
 # AugAgent 🤖
 
-[![PyPI version](https://badge.fury.io/py/augagent.svg)](https://badge.fury.io/py/augagent)
+[![PyPI version](https://img.shields.io/pypi/v/augagent.svg)](https://pypi.org/project/augagent/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
@@ -56,13 +56,13 @@ pytest tests/ -v
 ```
 
 ## 📖 Documentation
-Please refer to the `docs/` directory for our complete API reference and architectural guides.
+Please refer to our [complete API reference and architectural guides](https://augmencord.github.io/augagent/).
 
 ## 🤝 Contributing
-See [CONTRIBUTING.md](CONTRIBUTING.md) for how to help out.
+See [CONTRIBUTING.md](https://github.com/Augmencord/augagent/blob/main/CONTRIBUTING.md) for how to help out.
 
 ## 🔐 Security
-See [SECURITY.md](SECURITY.md) for vulnerability reporting.
+See [SECURITY.md](https://github.com/Augmencord/augagent/blob/main/SECURITY.md) for vulnerability reporting.
 
 ## 📄 License
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](https://github.com/Augmencord/augagent/blob/main/LICENSE) file for details.
