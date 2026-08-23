@@ -1,51 +1,51 @@
-import typer
+import argparse
 import asyncio
-from rich.console import Console
-from rich.panel import Panel
+import sys
 import uvicorn
-import json
-
-from augagent.models import AgentConfig, LLMConfig
 from augagent.agent import AugAgent
 
-app = typer.Typer(help="AugAgent Command Line Interface")
-console = Console()
+def start_server(args):
+    """Start the AugAgent FastAPI server."""
+    print(f"Starting API server on {args.host}:{args.port}")
+    uvicorn.run("augagent.api:app", host=args.host, port=args.port, reload=args.reload)
 
-@app.command()
-def run(
-    prompt: str = typer.Argument(..., help="The prompt to send to the agent"),
-    name: str = typer.Option("CLI_Agent", help="Name of the agent"),
-    role: str = typer.Option("Assistant", help="Role of the agent"),
-    goal: str = typer.Option("Help the user", help="Goal of the agent"),
-    model: str = typer.Option("qwen2.5-coder:7b", help="LLM model to use")
-):
-    """Run a single agent execution."""
-    console.print(Panel(f"Starting {name} ({model})...", title="AugAgent CLI"))
-    
-    config = AgentConfig(
-        name=name,
-        role=role,
-        goal=goal,
-        llm_config=LLMConfig(model=model)
-    )
-    
-    agent = AugAgent.from_config(config)
-    
+def run_agent(args):
+    """Run an agent with a specific prompt."""
     async def _run():
-        result = await agent.execute(prompt)
-        console.print(Panel(result.output, title="Result", style="bold green"))
-        
+        agent = AugAgent(
+            name=args.name,
+            role=args.role,
+            goal=args.goal
+        )
+        print(f"Executing: '{args.prompt}'...")
+        result = await agent.execute(args.prompt)
+        print("\n--- Result ---\n")
+        print(result.output)
+        print("\n--------------")
+    
     asyncio.run(_run())
 
-@app.command()
-def serve(
-    host: str = typer.Option("0.0.0.0", help="Host to bind the server to"),
-    port: int = typer.Option(8000, help="Port to bind the server to"),
-    reload: bool = typer.Option(False, help="Enable auto-reload")
-):
-    """Start the AugAgent REST API and WebSocket server."""
-    console.print(Panel(f"Starting AugAgent API on {host}:{port}", title="AugAgent Server"))
-    uvicorn.run("augagent.api:app", host=host, port=port, reload=reload)
+def main():
+    parser = argparse.ArgumentParser(description="AugAgent CLI")
+    subparsers = parser.add_subparsers(dest="command", help="Available commands", required=True)
+    
+    # API command
+    api_parser = subparsers.add_parser("api", help="Start the FastAPI backend server")
+    api_parser.add_argument("--host", type=str, default="0.0.0.0", help="Bind socket to this host")
+    api_parser.add_argument("--port", type=int, default=8000, help="Bind socket to this port")
+    api_parser.add_argument("--reload", action="store_true", help="Enable auto-reload")
+    api_parser.set_defaults(func=start_server)
+    
+    # Run command
+    run_parser = subparsers.add_parser("run", help="Run a single agent execution")
+    run_parser.add_argument("prompt", type=str, help="The instruction for the agent")
+    run_parser.add_argument("--name", type=str, default="CLI Agent", help="Agent name")
+    run_parser.add_argument("--role", type=str, default="Assistant", help="Agent role")
+    run_parser.add_argument("--goal", type=str, default="Fulfill the user request", help="Agent goal")
+    run_parser.set_defaults(func=run_agent)
+    
+    args = parser.parse_args()
+    args.func(args)
 
 if __name__ == "__main__":
-    app()
+    main()

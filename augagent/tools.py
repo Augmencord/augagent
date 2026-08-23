@@ -261,7 +261,7 @@ Tool = AugTool
 tool = aug_tool
 """Alias for :func:`aug_tool` — kept for backward compatibility."""
 
-_delegation_registry = {}
+_delegation_registry: dict[str, Any] = {}
 
 def register_agent(agent: Any):
     """Register an agent for delegation."""
@@ -271,7 +271,7 @@ class DelegateWorkArgs(BaseModel):
     agent_name: str = Field(description="The role/name of the sub-agent to delegate to.")
     task_description: str = Field(description="Detailed instructions of what the sub-agent needs to accomplish.")
 
-@aug_tool(args_schema=DelegateWorkArgs)
+@aug_tool(args_schema=DelegateWorkArgs)  # type: ignore
 async def DelegateWorkTool(agent_name: str, task_description: str) -> str:
     """Delegate a subtask to another specialized agent. The sub-agent will return its string result."""
     from augagent.task import Task

@@ -20,11 +20,26 @@ if not _logger.handlers:
 
 try:
     from opentelemetry import trace
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
     HAS_OTEL = True
+    
+    # Configure TracerProvider
+    provider = TracerProvider()
+    trace.set_tracer_provider(provider)
+    
+    # Try to use OTLP Exporter if installed, otherwise fallback to Console
+    try:
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+        exporter: Any = OTLPSpanExporter(endpoint="http://localhost:4317", insecure=True)
+    except ImportError:
+        exporter = ConsoleSpanExporter()
+        
+    provider.add_span_processor(BatchSpanProcessor(exporter))
     tracer = trace.get_tracer("augagent")
 except ImportError:
     HAS_OTEL = False
-    tracer = None
+    tracer = None  # type: ignore
 
 class DummySpan:
     def __enter__(self): return self

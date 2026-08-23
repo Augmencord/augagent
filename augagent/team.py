@@ -68,6 +68,8 @@ class AugTeam(BaseModel):
     process: Process = Process.SEQUENTIAL
     verbose: bool = False
     graph: Any = None # StateGraph reference
+    state_schema: Any = Field(default=None, description="Pydantic BaseModel class for strongly typed state.")
+    team_state: dict[str, Any] | None = Field(default=None, exclude=True)
 
     manager_llm_config: Any = Field(default=None)
 
@@ -111,12 +113,17 @@ class AugTeam(BaseModel):
         if self.verbose:
             logger.log_info(f"Team kickoff started with {len(self.tasks)} tasks.")
 
+        if self.state_schema:
+            self.team_state = self.state_schema().model_dump()
+        else:
+            self.team_state = None
+
         if self.process == Process.HIERARCHICAL:
-            results = await self._run_hierarchical(logger)
+            results = await self._run_hierarchical(logger, inputs)
         elif self.process == Process.GRAPH:
             results = await self._run_graph(logger, inputs)
         else:
-            results = await self._run_sequential(logger)
+            results = await self._run_sequential(logger, inputs)
 
         elapsed = time.time() - start
         completed = sum(1 for r in results if r.status == TaskStatus.COMPLETED)
@@ -127,7 +134,7 @@ class AugTeam(BaseModel):
 
         return results
 
-    async def _run_sequential(self, logger: Any) -> list[TaskResult]:
+    async def _run_sequential(self, logger: Any, inputs: dict[str, Any] | None = None) -> list[TaskResult]:
         """Execute tasks one-by-one, passing outputs as context to the next.
         Tasks with async_execution=True are grouped and executed concurrently."""
         results: list[TaskResult] = []
@@ -146,7 +153,9 @@ class AugTeam(BaseModel):
                 logger.log_info(f"Executing batch of {len(async_batch)} tasks concurrently...")
                 coros = []
                 for t in async_batch:
-                    if i > 0 and results and results[-1].status == TaskStatus.COMPLETED:
+                    if self.team_state:
+                        t.description += f"\\n\\nCurrent Team State:\\n{self.team_state}"
+                    elif i > 0 and results and results[-1].status == TaskStatus.COMPLETED:
                         prev_task = self.tasks[i - 1]
                         if prev_task not in t.context:
                             t.context.append(prev_task)
@@ -160,10 +169,12 @@ class AugTeam(BaseModel):
                     if isinstance(r, Exception):
                         results.append(TaskResult(task_id="", agent_name="", status=TaskStatus.FAILED, output=str(r)))
                     else:
-                        results.append(r)
+                        results.append(r)  # type: ignore
                 i = j
             else:
-                if i > 0 and results and results[-1].status == TaskStatus.COMPLETED:
+                if self.team_state:
+                    task.description += f"\\n\\nCurrent Team State:\\n{self.team_state}"
+                elif i > 0 and results and results[-1].status == TaskStatus.COMPLETED:
                     prev_task = self.tasks[i - 1]
                     if prev_task not in task.context:
                         task.context.append(prev_task)
@@ -176,47 +187,98 @@ class AugTeam(BaseModel):
 
                 if result.status == TaskStatus.COMPLETED:
                     logger.log_info(f"Task completed successfully. Output length: {len(result.output)} chars.")
+                    if self.team_state:
+                        try:
+                            import json
+                            # Assume the task output is a JSON string representing a partial state update
+                            partial_update = json.loads(result.output)
+                            self.team_state.update(partial_update)
+                        except Exception as e:
+                            logger.log_error(f"Failed to merge task output into team state: {e}")
                 else:
                     logger.log_error(f"Task failed: {result.output}")
                 i += 1
 
         return results
 
-    async def _run_hierarchical(self, logger: Any) -> list[TaskResult]:
-        """Execute tasks using a Manager Agent that dynamically routes subtasks."""
+    async def _run_hierarchical(self, logger: Any, inputs: dict[str, Any] | None = None) -> list[TaskResult]:
+        """Execute tasks using a Manager Agent that dynamically routes subtasks via Handoffs."""
         results: list[TaskResult] = []
         
         manager_kwargs = {
             "name": "Manager",
             "role": "Project Manager",
-            "goal": "Ensure all tasks are completed accurately and efficiently by delegating to the appropriate specialized agents.",
-            "allow_delegation": True,
+            "goal": "Ensure all tasks are completed accurately by routing to specialized agents.",
+            "allow_delegation": False, # Delegation is now handled via explicit handoff_targets
+            "handoff_targets": [a.name for a in self.agents],
             "verbose": self.verbose
         }
         if self.manager_llm_config:
             manager_kwargs["llm_config"] = self.manager_llm_config
             
-        manager = AugAgent(**manager_kwargs)
+        manager = AugAgent(**manager_kwargs)  # type: ignore
         
-        agent_descriptions = "\n".join([f"- {a.name}: {a.role}. Goal: {a.goal}" for a in self.agents])
+        agent_descriptions = "\\n".join([f"- {a.name}: {a.role}. Goal: {a.goal}" for a in self.agents])
+        
+        from augagent.models import Handoff
         
         for task in self.tasks:
             logger.log_handoff(from_agent="System", to_agent="Manager", task_desc=task.description)
             
-            prompt = f"You need to accomplish this task:\n{task.description}\n\n"
-            prompt += f"You have the following team members available to delegate sub-tasks to:\n{agent_descriptions}\n\n"
-            prompt += f"Use your delegation tool to delegate work to your team members if needed. Combine their results and provide the final expected output:\n{task.expected_output}"
+            prompt = f"You need to accomplish this task:\\n{task.description}\\n\\n"
+            prompt += f"You have the following team members available to route to:\\n{agent_descriptions}\\n\\n"
+            prompt += f"Use your transfer tools to pass control to the appropriate agent. Combine their results and provide the final expected output:\\n{task.expected_output}"
+            if self.team_state:
+                prompt += f"\\n\\nCurrent Team State:\\n{self.team_state}"
             
-            result = await manager.execute(prompt)
-            result = result.model_copy(update={"task_id": task.id})
-            task.status = TaskStatus.COMPLETED if result.status == TaskStatus.COMPLETED else TaskStatus.FAILED
-            task.result = result
-            results.append(result)
+            current_agent = manager
+            current_prompt = prompt
             
-            if result.status == TaskStatus.COMPLETED:
-                logger.log_info(f"Task completed hierarchically. Output length: {len(result.output)} chars.")
+            # Sub-agent execution loop for this task
+            while True:
+                result = await current_agent.execute(current_prompt)
+                
+                # Check if the result was a Handoff
+                if getattr(result, "raw_output", None) and isinstance(result.raw_output, Handoff):
+                    handoff = result.raw_output
+                    target_name = handoff.target_agent
+                    target_agent = self.get_agent(target_name)
+                    if not target_agent:
+                        current_prompt = f"Failed to transfer: Agent {target_name} not found."
+                        continue
+                        
+                    logger.log_handoff(from_agent=current_agent.name, to_agent=target_name, task_desc=handoff.reason)
+                    
+                    # Inherit context (last 5 messages from parent)
+                    history_to_pass = list(current_agent._message_history[-5:])
+                    if history_to_pass:
+                        target_agent._message_history.append({
+                            "role": "system",
+                            "content": f"[CONTEXT INHERITED FROM {current_agent.name}]:\\n" + "\\n".join(
+                                [f"{m.get('role', 'unknown')}: {m.get('content', '')}" for m in history_to_pass]
+                            )
+                        })
+                        
+                    current_agent = target_agent
+                    current_prompt = f"Control transferred to you for: {handoff.reason}\\nPayload: {handoff.payload}"
+                else:
+                    # An agent actually returned a final string answer
+                    if current_agent.name != "Manager":
+                        # Sub-agent finished its job. Pass control back to Manager.
+                        current_prompt = f"Sub-agent {current_agent.name} finished with output:\\n{result.output}\\n\\nReview this and proceed."
+                        current_agent = manager
+                    else:
+                        # Manager finished the task
+                        result = result.model_copy(update={"task_id": task.id})
+                        task.status = TaskStatus.COMPLETED if result.status == TaskStatus.COMPLETED else TaskStatus.FAILED
+                        task.result = result
+                        results.append(result)
+                        break
+                        
+            if task.result and task.result.status == TaskStatus.COMPLETED:
+                logger.log_info(f"Task completed hierarchically. Output length: {len(task.result.output)} chars.")
             else:
-                logger.log_error(f"Hierarchical task failed: {result.output}")
+                logger.log_error(f"Hierarchical task failed.")
                 
         return results
 

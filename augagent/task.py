@@ -128,7 +128,7 @@ class AugTask(BaseModel):
                     logger.log_error(f"JSON validation failed: {exc}")
                     
             try:
-                from augagent.memory import global_long_term_memory
+                from augagent.memory import global_long_term_memory  # type: ignore
                 if global_long_term_memory is not None:
                     global_long_term_memory.add_document(
                         text=f"Task: {self.description}\\nResult: {result.output}",
@@ -165,7 +165,7 @@ class AugTask(BaseModel):
             parts.append("---\n")
             
         try:
-            from augagent.memory import global_long_term_memory
+            from augagent.memory import global_long_term_memory  # type: ignore
             if global_long_term_memory is not None:
                 historical_context = global_long_term_memory.search(self.description)
                 if historical_context:

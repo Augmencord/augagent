@@ -38,6 +38,13 @@ class TaskStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class Handoff(BaseModel):
+    """A formal transfer of control from one agent to another."""
+    target_agent: str = Field(description="The name of the agent to hand off to.")
+    payload: dict[str, Any] = Field(default_factory=dict, description="Contextual data passed to the target agent.")
+    reason: str = Field(default="", description="Reason for the handoff.")
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # LLM CONFIGURATION SCHEMAS
 # ═══════════════════════════════════════════════════════════════════════════
@@ -71,9 +78,9 @@ class LLMConfig(BaseModel):
         description="Model identifier (e.g. 'gpt-4o', 'claude-3-opus', 'llama3').",
     )
     api_key: SecretStr | None = Field(
-        default=None,
+        default=SecretStr("ollama"),
         description=(
-            "API key for the provider. If not set, the framework reads the "
+            "API key for the provider. Defaults to 'ollama' for local usage. If not set, the framework reads the "
             "environment variable specified by ``api_key_env_var``."
         ),
     )
@@ -82,7 +89,7 @@ class LLMConfig(BaseModel):
         description="Environment variable to read the API key from when ``api_key`` is None.",
     )
     base_url: str = Field(
-        default="http://localhost:11434/v1",
+        default="http://127.0.0.1:11434/v1",
         description="Base URL of the chat-completions API.",
     )
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
@@ -278,9 +285,18 @@ class AgentConfig(BaseModel):
         ge=1,
         description="Maximum ReAct loop iterations before the agent stops.",
     )
+    max_context_tokens: int = Field(
+        default=4000,
+        ge=500,
+        description="Maximum estimated tokens allowed in context before pruning.",
+    )
     allow_delegation: bool = Field(
         default=False,
         description="Whether this agent may delegate sub-tasks to teammates.",
+    )
+    handoff_targets: list[str] = Field(
+        default_factory=list,
+        description="List of agent names this agent can explicitly hand off to.",
     )
     verbose: bool = False
     token_budget: TokenBudget | None = None
@@ -304,5 +320,14 @@ class TaskResult(BaseModel):
     elapsed_seconds: float = 0.0
     iterations: int = 0
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class PendingApproval(BaseModel):
+    """Returned when an agent execution pauses for human approval."""
+    thread_id: str
+    agent_name: str
+    tool_name: str
+    arguments: dict[str, Any]
+    status: TaskStatus = TaskStatus.PENDING
 
 # EOF

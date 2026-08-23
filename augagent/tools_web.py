@@ -2,7 +2,7 @@
 
 import requests
 from bs4 import BeautifulSoup
-import markdownify
+import markdownify  # type: ignore
 from pydantic import BaseModel, Field
 from augagent.tools import aug_tool
 
@@ -10,7 +10,7 @@ class SearchWebArgs(BaseModel):
     query: str = Field(description="The search query.")
     num_results: int = Field(default=3, description="Number of results to return.")
 
-@aug_tool(args_schema=SearchWebArgs)
+@aug_tool(args_schema=SearchWebArgs)  # type: ignore  # type: ignore  # type: ignore
 def search_web(query: str, num_results: int = 3) -> str:
     """Search the web using a local SearxNG instance."""
     url = "http://localhost:8080/search"
@@ -45,7 +45,7 @@ def search_web(query: str, num_results: int = 3) -> str:
 class ReadUrlArgs(BaseModel):
     url: str = Field(description="The URL of the webpage to read.")
 
-@aug_tool(args_schema=ReadUrlArgs)
+@aug_tool(args_schema=ReadUrlArgs)  # type: ignore
 def read_url_content(url: str) -> str:
     """Fetch a webpage and extract its main content as clean Markdown."""
     try:

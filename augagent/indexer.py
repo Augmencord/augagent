@@ -6,7 +6,7 @@ Scans local directories, chunks code files, and embeddings them into LongTermMem
 import os
 import ast
 from pathlib import Path
-from augagent.memory import global_long_term_memory
+from augagent.memory import global_long_term_memory  # type: ignore
 
 def chunk_text_naive(text: str, chunk_size: int = 1000, overlap: int = 200) -> list[str]:
     chunks = []
