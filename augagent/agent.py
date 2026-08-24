@@ -728,11 +728,26 @@ class AugAgent(AgentConfig):
             parts.append(f"\nBackstory: {self.backstory}")
 
         import platform
+        import os
+        
         os_name = platform.system()
+        cwd = os.getcwd()
+        shell = os.environ.get("SHELL", os.environ.get("COMSPEC", "unknown"))
+        
+        env_details = [
+            "\n[Operating Environment Context]",
+            f"Host OS: {os_name} ({platform.release()})",
+            f"Active Shell: {shell}",
+            f"Current Working Directory: {cwd}",
+            f"Current User: {os.environ.get('USER', os.environ.get('USERNAME', 'unknown'))}"
+        ]
+        
         if os_name == "Windows":
-            parts.append("\nOperating Environment: Windows (Use PowerShell commands for terminal tasks, e.g., Get-ChildItem instead of ls, Get-PSDrive instead of df)")
+            env_details.append("Note: Use PowerShell commands for terminal tasks (e.g., Get-ChildItem instead of ls).")
         else:
-            parts.append(f"\nOperating Environment: {os_name} (Use standard Unix/Linux commands)")
+            env_details.append("Note: Use standard Unix/Linux commands.")
+            
+        parts.append("\n".join(env_details))
 
         active_tools = self._get_active_tools()
         if active_tools:
