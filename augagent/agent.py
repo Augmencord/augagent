@@ -243,63 +243,7 @@ class AugAgent(AgentConfig):
             
         return system_msgs + other_msgs
 
-    def _extract_fuzzy_tool_calls(self, content: str) -> list[ChatToolCall]:
-        import re
-        import uuid
-        import json
-        calls = []
-        
-        # 1. XML Fallback
-        xml_matches = re.finditer(r'<tool_call>\s*<name>(.*?)</name>\s*<arguments>(.*?)</arguments>\s*</tool_call>', content, re.DOTALL)
-        for match in xml_matches:
-            name = match.group(1).strip()
-            args = match.group(2).strip()
-            if not args.startswith("{"):
-                args = f'{{"raw": {json.dumps(args)}}}'
-            calls.append(
-                ChatToolCall(
-                    id=f"call_{uuid.uuid4().hex[:12]}",
-                    type="function",
-                    function=FunctionCall(name=name, arguments=args)
-                )
-            )
-            
-        if calls: return calls
-            
-        # 2. Markdown JSON block fallback
-        json_blocks = re.finditer(r'```(?:json)?\s*(\{\s*"name".*?\})\s*```', content, re.DOTALL)
-        for match in json_blocks:
-            try:
-                parsed = json.loads(match.group(1))
-                if "name" in parsed and "arguments" in parsed:
-                    args = parsed["arguments"]
-                    calls.append(
-                        ChatToolCall(
-                            id=f"call_{uuid.uuid4().hex[:12]}",
-                            type="function",
-                            function=FunctionCall(name=parsed["name"], arguments=json.dumps(args) if isinstance(args, dict) else str(args))
-                        )
-                    )
-            except Exception: pass
-                
-        if calls: return calls
-            
-        # 3. Raw inline JSON fallback
-        match_obj = re.search(r'\{\s*"name"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:\s*\{.*?\}\s*\}', content, re.DOTALL)
-        if match_obj:
-            try:
-                parsed = json.loads(match_obj.group(0))
-                if "name" in parsed and "arguments" in parsed:
-                    calls.append(
-                        ChatToolCall(
-                            id=f"call_{uuid.uuid4().hex[:12]}",
-                            type="function",
-                            function=FunctionCall(name=parsed["name"], arguments=json.dumps(parsed["arguments"]) if isinstance(parsed["arguments"], dict) else str(parsed["arguments"]))
-                        )
-                    )
-            except Exception: pass
-                
-        return calls
+
 
     # ══════════════════════════════════════════════════════════════════════
     # REACT LOOP  (Reason → Act → Observe)
@@ -410,13 +354,7 @@ class AugAgent(AgentConfig):
             if not assistant_msg.tool_calls:
                 final_output = assistant_msg.content or ""
                 
-                # FALLBACK: Try to parse fuzzy tool calls
-                fuzzy_calls = self._extract_fuzzy_tool_calls(final_output)
-                if fuzzy_calls:
-                    assistant_msg.tool_calls = fuzzy_calls
-                    messages[-1]["tool_calls"] = [self._chat_message_to_dict(assistant_msg)["tool_calls"][0]]
-                    if self.verbose:
-                        logger.log_info(f"[{self.name}] Parsed fuzzy tool calls: {[tc.function.name for tc in fuzzy_calls]}")
+
                 
             if not assistant_msg.tool_calls:
                 final_output = assistant_msg.content or ""
@@ -741,15 +679,8 @@ class AugAgent(AgentConfig):
             parts.append(
                 "\nCRITICAL INSTRUCTIONS FOR TOOL USAGE:"
                 "\n1. You MUST use one of the provided tools to interact with the system or gather information."
-                "\n2. To execute a tool, you MUST output a JSON block matching this exact format:"
-                '\n```json'
-                '\n{'
-                '\n  "name": "tool_name",'
-                '\n  "arguments": {"arg1": "value1"}'
-                '\n}'
-                '\n```'
-                "\n3. Do not just tell the user what command to run. YOU must run it yourself using the tool by outputting the JSON block!"
-                "\n4. Only after you have gathered enough information using tools should you provide a final conversational answer."
+                "\n2. You MUST use the native tool calling API. Do not write tool calls as markdown."
+                "\n3. Only after you have gathered enough information using tools should you provide a final conversational answer."
             )
 
         return "\n".join(parts)
