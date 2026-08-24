@@ -357,153 +357,158 @@ class AugAgent(AgentConfig):
             "total_tokens": 0,
         }
 
-        for iteration in range(1, self.max_iterations + 1):
-            if self.checkpointer:
-                try:
-                    await self.checkpointer.save(self.id, {"message_history": self._message_history}, iteration)
-                except Exception as e:
-                    logger.log_error(f"Failed to save checkpoint: {e}")
-                    
-            if self.verbose:
-                logger.log_info(f"[{self.name}] --- iteration {iteration} / {self.max_iterations} ---")
+        # Deterministic State Machine implementation
+        state = "PLAN"
+        iteration = 0
+        assistant_msg = None
 
-            # ── REASON: call the LLM ─────────────────────────────────────
-            t0 = time.time()
-            completion = await self._call_llm(messages, logger, stream_callback)
-            llm_latency = time.time() - t0
-
-            if completion.usage:
-                total_usage["prompt_tokens"] += completion.usage.prompt_tokens
-                total_usage["completion_tokens"] += completion.usage.completion_tokens
-                total_usage["total_tokens"] += completion.usage.total_tokens
-
-                if self.token_budget:
-                    if self.token_budget.max_input_tokens and total_usage["prompt_tokens"] > self.token_budget.max_input_tokens:
-                        raise TokenBudgetExceededError(f"Input token budget exceeded: {total_usage['prompt_tokens']} > {self.token_budget.max_input_tokens}")
-                    if self.token_budget.max_output_tokens and total_usage["completion_tokens"] > self.token_budget.max_output_tokens:
-                        raise TokenBudgetExceededError(f"Output token budget exceeded: {total_usage['completion_tokens']} > {self.token_budget.max_output_tokens}")
-                    if self.token_budget.max_total_tokens and total_usage["total_tokens"] > self.token_budget.max_total_tokens:
-                        raise TokenBudgetExceededError(f"Total token budget exceeded: {total_usage['total_tokens']} > {self.token_budget.max_total_tokens}")
-
-            if not completion.choices:
-                raise RuntimeError("LLM returned an empty choices array.")
-
-            assistant_msg = completion.choices[0].message
-            messages.append(self._chat_message_to_dict(assistant_msg))
-
-            if self.audit_logger:
-                tokens = {
-                    "prompt": completion.usage.prompt_tokens if completion.usage else 0,
-                    "completion": completion.usage.completion_tokens if completion.usage else 0,
-                    "total": completion.usage.total_tokens if completion.usage else 0,
-                }
-                self.audit_logger.log_llm_call(
-                    model=completion.model or self.llm_config.model,
-                    prompt=messages[-2].get("content", "") if len(messages) >= 2 else "",
-                    response=assistant_msg.content or "",
-                    tokens=tokens,
-                    latency=llm_latency,
-                    tenant_id=self.id
-                )
-
-            # ── Final answer (no tool calls) ─────────────────────────────
-            if not assistant_msg.tool_calls:
-                final_output = assistant_msg.content or ""
-                
-                # FALLBACK: Try to parse fuzzy tool calls
-                fuzzy_calls = self._extract_fuzzy_tool_calls(final_output)
-                if fuzzy_calls:
-                    assistant_msg.tool_calls = fuzzy_calls
-                    messages[-1]["tool_calls"] = [self._chat_message_to_dict(assistant_msg)["tool_calls"][0]]
-                    if self.verbose:
-                        logger.log_info(f"[{self.name}] Parsed fuzzy tool calls: {[tc.function.name for tc in fuzzy_calls]}")
-                
-            if not assistant_msg.tool_calls:
-                final_output = assistant_msg.content or ""
+        while iteration < self.max_iterations and state != "END":
+            if state in ("PLAN", "REVIEW"):
+                iteration += 1
+                if self.checkpointer:
+                    try:
+                        await self.checkpointer.save(self.id, {"message_history": self._message_history, "state": state}, iteration)
+                    except Exception as e:
+                        logger.log_error(f"Failed to save checkpoint: {e}")
+                        
                 if self.verbose:
-                    logger.log_info(f"[{self.name}] final answer ({len(final_output)} chars)")
-                self._message_history = list(messages)
-                return final_output, total_usage, iteration
+                    logger.log_info(f"[{self.name}] --- iteration {iteration} / {self.max_iterations} | State: {state} ---")
 
-            # ── ACT: execute each tool call ──────────────────────────────
-            for tc in assistant_msg.tool_calls:
-                logger.log_tool_execution(
-                    agent_name=self.name,
-                    tool_name=tc.function.name,
-                    args=tc.function.arguments[:200]
-                )
-                
-                try:
-                    args_dict = json.loads(tc.function.arguments) if tc.function.arguments else {}
-                except json.JSONDecodeError:
-                    args_dict = {"raw": tc.function.arguments}
-                
-                if stream_callback:
-                    event = {"type": "tool_call_start", "tool_name": tc.function.name, "tool_args": args_dict}
-                    if inspect.iscoroutinefunction(stream_callback):
-                        await stream_callback(event)
-                    else:
-                        stream_callback(event)
-                
-                if self.require_human_approval:
-                    logger.log_info(f"[{self.name}] HITL interruption requested for {tc.function.name}")
-                    from augagent.execution_store import execution_store, ExecutionStatus
+                # ── REASON (PLAN/REVIEW): call the LLM ─────────────────────────────────────
+                t0 = time.time()
+                completion = await self._call_llm(messages, logger, stream_callback)
+                llm_latency = time.time() - t0
+
+                if completion.usage:
+                    total_usage["prompt_tokens"] += completion.usage.prompt_tokens
+                    total_usage["completion_tokens"] += completion.usage.completion_tokens
+                    total_usage["total_tokens"] += completion.usage.total_tokens
+
+                    if self.token_budget:
+                        if self.token_budget.max_input_tokens and total_usage["prompt_tokens"] > self.token_budget.max_input_tokens:
+                            raise TokenBudgetExceededError(f"Input token budget exceeded: {total_usage['prompt_tokens']} > {self.token_budget.max_input_tokens}")
+                        if self.token_budget.max_output_tokens and total_usage["completion_tokens"] > self.token_budget.max_output_tokens:
+                            raise TokenBudgetExceededError(f"Output token budget exceeded: {total_usage['completion_tokens']} > {self.token_budget.max_output_tokens}")
+                        if self.token_budget.max_total_tokens and total_usage["total_tokens"] > self.token_budget.max_total_tokens:
+                            raise TokenBudgetExceededError(f"Total token budget exceeded: {total_usage['total_tokens']} > {self.token_budget.max_total_tokens}")
+
+                if not completion.choices:
+                    raise RuntimeError("LLM returned an empty choices array.")
+
+                assistant_msg = completion.choices[0].message
+                messages.append(self._chat_message_to_dict(assistant_msg))
+
+                if self.audit_logger:
+                    tokens = {
+                        "prompt": completion.usage.prompt_tokens if completion.usage else 0,
+                        "completion": completion.usage.completion_tokens if completion.usage else 0,
+                        "total": completion.usage.total_tokens if completion.usage else 0,
+                    }
+                    self.audit_logger.log_llm_call(
+                        model=completion.model or self.llm_config.model,
+                        prompt=messages[-2].get("content", "") if len(messages) >= 2 else "",
+                        response=assistant_msg.content or "",
+                        tokens=tokens,
+                        latency=llm_latency,
+                        tenant_id=self.id
+                    )
+
+                # ── Final answer (no tool calls) ─────────────────────────────
+                if not assistant_msg.tool_calls:
+                    final_output = assistant_msg.content or ""
                     
-                    pending = PendingApproval(
-                        thread_id=self.id,
+                    # FALLBACK: Try to parse fuzzy tool calls
+                    fuzzy_calls = self._extract_fuzzy_tool_calls(final_output)
+                    if fuzzy_calls:
+                        assistant_msg.tool_calls = fuzzy_calls
+                        messages[-1]["tool_calls"] = [self._chat_message_to_dict(assistant_msg)["tool_calls"][0]]
+                        if self.verbose:
+                            logger.log_info(f"[{self.name}] Parsed fuzzy tool calls: {[tc.function.name for tc in fuzzy_calls]}")
+                    
+                if not assistant_msg.tool_calls:
+                    final_output = assistant_msg.content or ""
+                    if self.verbose:
+                        logger.log_info(f"[{self.name}] final answer ({len(final_output)} chars)")
+                    self._message_history = list(messages)
+                    return final_output, total_usage, iteration
+                else:
+                    state = "EXECUTE"
+
+            elif state == "EXECUTE":
+                # ── ACT: execute each tool call ──────────────────────────────
+                for tc in assistant_msg.tool_calls:
+                    logger.log_tool_execution(
                         agent_name=self.name,
                         tool_name=tc.function.name,
-                        arguments=args_dict
+                        args=tc.function.arguments[:200]
                     )
                     
-                    await execution_store.save_state(
-                        thread_id=self.id,
-                        agent_config=self.model_dump(mode='json'),
-                        message_history=messages,
-                        current_step=iteration,
-                        status=ExecutionStatus.WAITING_HUMAN_INPUT,
-                        pending_action=pending.model_dump(mode='json')
-                    )
-                    return pending
+                    try:
+                        args_dict = json.loads(tc.function.arguments) if tc.function.arguments else {}
+                    except json.JSONDecodeError:
+                        args_dict = {"raw": tc.function.arguments}
                     
-                t0 = time.time()
-                tool_output = await self._execute_tool_call(tc, logger)
-                duration = time.time() - t0
-                
-                from augagent.models import Handoff
-                if isinstance(tool_output, Handoff):
-                    self._message_history = list(messages)
-                    return tool_output
-                
-                if self.audit_logger:
-                    self.audit_logger.log_tool_execution(
-                        tool_name=tc.function.name,
-                        args=args_dict,
-                        result=str(tool_output),
-                        duration=duration,
-                        agent_id=self.id
-                    )
+                    if stream_callback:
+                        event = {"type": "tool_call_start", "tool_name": tc.function.name, "tool_args": args_dict}
+                        if inspect.iscoroutinefunction(stream_callback):
+                            await stream_callback(event)
+                        else:
+                            stream_callback(event)
+                    
+                    if self.require_human_approval:
+                        logger.log_info(f"[{self.name}] HITL interruption requested for {tc.function.name}")
+                        from augagent.execution_store import execution_store, ExecutionStatus
+                        
+                        pending = PendingApproval(
+                            thread_id=self.id,
+                            agent_name=self.name,
+                            tool_name=tc.function.name,
+                            arguments=args_dict
+                        )
+                        
+                        await execution_store.save_state(
+                            thread_id=self.id,
+                            agent_config=self.model_dump(mode='json'),
+                            message_history=messages,
+                            current_step=iteration,
+                            status=ExecutionStatus.WAITING_HUMAN_INPUT,
+                            pending_action=pending.model_dump(mode='json')
+                        )
+                        return pending
+                        
+                    t0 = time.time()
+                    tool_output = await self._execute_tool_call(tc, logger)
+                    duration = time.time() - t0
+                    
+                    from augagent.models import Handoff
+                    if isinstance(tool_output, Handoff):
+                        self._message_history = list(messages)
+                        return tool_output
+                    
+                    if self.audit_logger:
+                        self.audit_logger.log_tool_execution(
+                            tool_name=tc.function.name,
+                            args=args_dict,
+                            result=str(tool_output),
+                            duration=duration,
+                            agent_id=self.id
+                        )
 
-                if stream_callback:
-                    event = {"type": "tool_call_end", "result": str(tool_output)}
-                    if inspect.iscoroutinefunction(stream_callback):
-                        await stream_callback(event)
-                    else:
-                        stream_callback(event)
+                    if stream_callback:
+                        event = {"type": "tool_call_end", "result": str(tool_output)}
+                        if inspect.iscoroutinefunction(stream_callback):
+                            await stream_callback(event)
+                        else:
+                            stream_callback(event)
 
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": str(tool_output),
-                })
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": str(tool_output),
+                    })
 
-            self._message_history = list(messages)
-            
-            if self.checkpointer:
-                try:
-                    await self.checkpointer.save(self.id, {"message_history": self._message_history}, iteration)
-                except Exception as e:
-                    logger.log_error(f"Failed to save checkpoint during loop: {e}")
+                self._message_history = list(messages)
+                state = "REVIEW"
 
         # ── Max iterations exhausted ─────────────────────────────────────
         logger.log_error(f"[{self.name}] reached max iterations ({self.max_iterations}).")
