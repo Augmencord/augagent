@@ -43,6 +43,8 @@ class Handoff(BaseModel):
     target_agent: str = Field(description="The name of the agent to hand off to.")
     payload: dict[str, Any] = Field(default_factory=dict, description="Contextual data passed to the target agent.")
     reason: str = Field(default="", description="Reason for the handoff.")
+    message_history: list[dict[str, Any]] = Field(default_factory=list, description="The message history of the parent agent at the time of handoff.")
+    parent_goal: str = Field(default="", description="The goal of the parent agent.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════

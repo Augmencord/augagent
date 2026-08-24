@@ -117,9 +117,32 @@ class AugAgent(AgentConfig):
     def _get_active_tools(self) -> list[AugTool]:
         active_tools = list(self.tools)
         if self.allow_delegation:
-            from augagent.tools import DelegateWorkTool
-            if not any(getattr(t, "name", "") == getattr(DelegateWorkTool, "name", "") for t in active_tools):
-                active_tools.append(DelegateWorkTool)  # type: ignore
+            def make_delegate():
+                from augagent.tools import AugTool, DelegateWorkArgs, _delegation_registry
+                from augagent.task import AugTask
+                
+                async def _delegate(agent_name: str, task_description: str) -> str:
+                    sub_agent = _delegation_registry.get(agent_name)
+                    if not sub_agent:
+                        return f"Error: Agent '{agent_name}' not found."
+                    
+                    history_to_pass = list(self._message_history)
+                    if history_to_pass:
+                        sub_agent._message_history.append({
+                            "role": "system",
+                            "content": f"[CONTEXT INHERITED FROM {self.name} (Goal: {self.goal})]:\n" + "\n".join(
+                                [f"{m.get('role', 'unknown')}: {m.get('content', '')}" for m in history_to_pass[-10:]]
+                            )
+                        })
+                        
+                    sub_task = AugTask(description=task_description, agent=sub_agent)
+                    result = await sub_task.execute()
+                    return f"Delegation to {agent_name} complete. Result:\n{result.output}"
+                    
+                return AugTool.from_function(_delegate, name="DelegateWorkTool", description="Delegate a subtask to another specialized agent.", args_schema=DelegateWorkArgs)
+            
+            if not any(getattr(t, "name", "") == "DelegateWorkTool" for t in active_tools):
+                active_tools.append(make_delegate())  # type: ignore
                 
         if self.handoff_targets:
             for target in self.handoff_targets:
@@ -131,7 +154,10 @@ class AugAgent(AgentConfig):
 
                     def make_handoff(tgt=target):
                         async def _handoff_func(payload: dict[str, Any] | None = None, reason: str = ""):
-                            return Handoff(target_agent=tgt, payload=payload or {}, reason=reason)
+                            h = Handoff(target_agent=tgt, payload=payload or {}, reason=reason)
+                            h.message_history = list(self._message_history)
+                            h.parent_goal = self.goal
+                            return h
                         _handoff_func.__name__ = f"_transfer_to_{tgt.lower().replace(' ', '_')}"
                         return _handoff_func
 

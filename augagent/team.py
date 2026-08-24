@@ -249,12 +249,12 @@ class AugTeam(BaseModel):
                         
                     logger.log_handoff(from_agent=current_agent.name, to_agent=target_name, task_desc=handoff.reason)
                     
-                    # Inherit context (last 5 messages from parent)
-                    history_to_pass = list(current_agent._message_history[-5:])
+                    # Inherit full context and parent goal from Handoff payload
+                    history_to_pass = list(handoff.message_history[-10:]) if handoff.message_history else []
                     if history_to_pass:
                         target_agent._message_history.append({
                             "role": "system",
-                            "content": f"[CONTEXT INHERITED FROM {current_agent.name}]:\\n" + "\\n".join(
+                            "content": f"[CONTEXT INHERITED FROM {current_agent.name} (Goal: {handoff.parent_goal})]:\n" + "\n".join(
                                 [f"{m.get('role', 'unknown')}: {m.get('content', '')}" for m in history_to_pass]
                             )
                         })
