@@ -49,6 +49,19 @@ from augagent.team import AugTeam, Process, Team
 from augagent.telemetry import AgentLogger, get_logger
 from augagent.tools import AugTool, Tool, aug_tool, tool, PluginRegistry
 from augagent.mcp_client import MCPToolAdapter
+from augagent.diff_engine import (
+    apply_patch,
+    generate_unified_diff,
+    get_workspace_root,
+    resolve_sandboxed_path,
+)
+from augagent.tools_file_write import (
+    create_file,
+    delete_lines,
+    insert_at_line,
+    replace_in_file,
+    write_file,
+)
 
 __version__ = "1.0.0"
 
@@ -63,6 +76,16 @@ __all__ = [
     "aug_tool",
     "PluginRegistry",
     "MCPToolAdapter",
+    # File write, edit & diff tools
+    "write_file",
+    "create_file",
+    "replace_in_file",
+    "insert_at_line",
+    "delete_lines",
+    "generate_unified_diff",
+    "apply_patch",
+    "resolve_sandboxed_path",
+    "get_workspace_root",
     # Backward compatibility aliases
     "Agent",
     "Task",

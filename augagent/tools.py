@@ -132,6 +132,10 @@ class AugTool(BaseModel):
         result = self.func(**validated.model_dump())
         return result if isinstance(result, str) else json.dumps(result, default=str)
 
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """Allow calling the tool directly as a standard Python function."""
+        return self.func(*args, **kwargs)
+
     # ── Factory ───────────────────────────────────────────────────────────
 
     @classmethod
