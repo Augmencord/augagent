@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException, WebSocket, Security, Depends, Request, BackgroundTasks
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Callable, Optional
@@ -118,6 +118,12 @@ class ExecuteRequest(BaseModel):
     prompt: str
     inputs: Dict[str, Any] = {}
 
+class AgentStreamRequest(BaseModel):
+    prompt: str
+    agent_id: Optional[str] = None
+    agent_config: Optional[AgentConfig] = None
+    inputs: Dict[str, Any] = Field(default_factory=dict)
+
 # Global in-memory storage for demo purposes
 active_agents: Dict[str, Any] = {}
 active_executions: Dict[str, Any] = {}
@@ -134,6 +140,105 @@ async def create_agent(config: AgentConfig, user: UserUser = Depends(require_rol
 async def kickoff(request: KickoffRequest, user: UserUser = Depends(get_current_user)):
     """Trigger team execution with validation."""
     return {"status": "success", "message": "Kickoff accepted"}
+
+
+@app.post("/v1/agent/stream")
+@app.post("/api/v1/agent/stream")
+async def stream_agent_execution(request: AgentStreamRequest, req: Request):
+    """
+    POST /v1/agent/stream with SSE response.
+    Events: token, tool_call, done
+    """
+    auth_header = req.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1]
+        try:
+            jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        except jwt.PyJWTError:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+    agent: AugAgent | None = None
+    if request.agent_id:
+        agent = active_agents.get(request.agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail=f"Agent '{request.agent_id}' not found")
+    elif request.agent_config:
+        agent = AugAgent.from_config(request.agent_config)
+    else:
+        agent = AugAgent(
+            name="StreamingAssistant",
+            role="AI Assistant",
+            goal="Assist user with code and queries",
+            llm_config=LLMConfig(),
+        )
+
+    async def sse_generator():
+        queue: asyncio.Queue[tuple[str, dict[str, Any]] | None] = asyncio.Queue()
+
+        async def stream_callback(event: Any):
+            if isinstance(event, str):
+                await queue.put(("token", {"token": event, "content": event}))
+            elif isinstance(event, dict):
+                event_type = event.get("type", "")
+                if event_type in ("tool_call_start", "tool_call_end", "tool_call"):
+                    payload = {
+                        "tool": event.get("tool_name") or event.get("tool") or event.get("name", ""),
+                        "name": event.get("tool_name") or event.get("tool") or event.get("name", ""),
+                        "arguments": event.get("tool_args") or event.get("arguments", {}),
+                        "result": event.get("result"),
+                        "status": "start" if event_type == "tool_call_start" else ("completed" if event_type == "tool_call_end" else event.get("status", "call")),
+                    }
+                    await queue.put(("tool_call", payload))
+                elif event_type in ("token", "chunk"):
+                    chunk_text = event.get("content") or event.get("token", "")
+                    await queue.put(("token", {"token": chunk_text, "content": chunk_text}))
+                else:
+                    await queue.put(("tool_call", event))
+
+        async def run_agent():
+            try:
+                result = await agent.execute(  # type: ignore
+                    request.prompt,
+                    stream_callback=stream_callback,
+                    stream=True,
+                )
+                done_payload = {
+                    "output": result.output,
+                    "status": result.status.value if hasattr(result.status, "value") else str(result.status),
+                    "token_usage": result.token_usage,
+                    "iterations": result.iterations,
+                }
+                await queue.put(("done", done_payload))
+            except Exception as exc:
+                await queue.put(("done", {
+                    "output": f"Execution error: {exc}",
+                    "status": "failed",
+                    "error": str(exc),
+                }))
+            finally:
+                await queue.put(None)
+
+        task = asyncio.create_task(run_agent())
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    break
+                event_name, data = item
+                yield f"event: {event_name}\ndata: {json.dumps(data)}\n\n"
+        finally:
+            if not task.done():
+                task.cancel()
+
+    return StreamingResponse(
+        sse_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 async def execute_task_wrapper(thread_id: str, agent: AugAgent, prompt: str):
     try:

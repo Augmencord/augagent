@@ -152,7 +152,7 @@ class AugAgent(AgentConfig):
 
         return active_tools
 
-    async def execute(self, prompt: str, message_history: list[dict[str, Any]] | None = None, stream_callback: Any | None = None, resume_from_checkpoint: bool = False) -> TaskResult:
+    async def execute(self, prompt: str, message_history: list[dict[str, Any]] | None = None, stream_callback: Any | None = None, resume_from_checkpoint: bool = False, stream: bool = False) -> TaskResult:
         """Run the agent's ReAct loop on the given prompt."""
         logger = get_logger()
         start = time.time()
@@ -167,7 +167,7 @@ class AugAgent(AgentConfig):
                     self._message_history = state["message_history"]
     
             try:
-                output = await self._react_loop(prompt, message_history, logger, stream_callback)
+                output = await self._react_loop(prompt, message_history, logger, stream_callback, stream=stream)
                 if isinstance(output, PendingApproval):
                     return TaskResult(
                         task_id="",
@@ -311,6 +311,7 @@ class AugAgent(AgentConfig):
         message_history: list[dict[str, Any]] | None,
         logger: Any,
         stream_callback: Any | None = None,
+        stream: bool = False,
     ) -> tuple[str, dict[str, int], int] | PendingApproval | Any:
         """Core ReAct loop."""
         messages: list[dict[str, Any]] = []
@@ -369,7 +370,7 @@ class AugAgent(AgentConfig):
 
             # ── REASON: call the LLM ─────────────────────────────────────
             t0 = time.time()
-            completion = await self._call_llm(messages, logger, stream_callback)
+            completion = await self._call_llm(messages, logger, stream_callback, stream=(stream or stream_callback is not None))
             llm_latency = time.time() - t0
 
             if completion.usage:
@@ -529,6 +530,7 @@ class AugAgent(AgentConfig):
         messages: list[dict[str, Any]],
         logger: Any,
         stream_callback: Any | None = None,
+        stream: bool = True,
     ) -> ChatCompletion:
         """POST to ``/chat/completions`` with fallback routing."""
         models_to_try = [self.llm_config] + self.fallback_models
@@ -536,7 +538,7 @@ class AugAgent(AgentConfig):
         last_exc: Exception | None = None
         for cfg in models_to_try:
             try:
-                return await self._call_llm_single(cfg, messages, logger, stream_callback)
+                return await self._call_llm_single(cfg, messages, logger, stream_callback, stream=stream)
             except Exception as exc:
                 last_exc = exc
                 logger.log_error(f"Model '{cfg.model}' failed: {exc}. Trying next fallback...")
@@ -549,6 +551,7 @@ class AugAgent(AgentConfig):
         messages: list[dict[str, Any]],
         logger: Any,
         stream_callback: Any | None = None,
+        stream: bool = True,
     ) -> ChatCompletion:
         """POST to ``/chat/completions`` with retry + exponential backoff for a specific config."""
         url = f"{cfg.base_url.rstrip('/')}/chat/completions"
@@ -578,7 +581,8 @@ class AugAgent(AgentConfig):
         if active_tools:
             payload["tools"] = [t.to_openai_schema() for t in active_tools]
             
-        if stream_callback:
+        use_stream = stream or (stream_callback is not None)
+        if use_stream:
             payload["stream"] = True
 
         last_exc: Exception | None = None
@@ -586,7 +590,7 @@ class AugAgent(AgentConfig):
         for attempt in range(cfg.max_retries + 1):
             try:
                 client = self._get_client()
-                if stream_callback:
+                if use_stream:
                     async with client.stream("POST", url, headers=headers, json=payload) as resp:
                         if resp.status_code == 429:
                             retry_after = float(resp.headers.get("retry-after", str(2 ** attempt)))
@@ -597,11 +601,12 @@ class AugAgent(AgentConfig):
                         
                         full_content = ""
                         tool_calls = {}
+                        usage_data: dict[str, int] | None = None
                         
                         async for line in resp.aiter_lines():
                             if not line or not line.startswith("data: "):
                                 continue
-                            data_str = line[6:]
+                            data_str = line[6:].strip()
                             if data_str == "[DONE]":
                                 break
                             try:
@@ -609,6 +614,9 @@ class AugAgent(AgentConfig):
                             except json.JSONDecodeError:
                                 continue
                             
+                            if "usage" in chunk and chunk["usage"]:
+                                usage_data = chunk["usage"]
+
                             if not chunk.get("choices"):
                                 continue
                             delta = chunk["choices"][0].get("delta", {})
@@ -616,10 +624,10 @@ class AugAgent(AgentConfig):
                             if "content" in delta and delta["content"]:
                                 chunk_content = delta["content"]
                                 full_content += chunk_content
-                                if inspect.iscoroutinefunction(stream_callback):
-                                    await stream_callback(chunk_content)
-                                else:
-                                    stream_callback(chunk_content)
+                                if stream_callback:
+                                    res = stream_callback(chunk_content)
+                                    if asyncio.iscoroutine(res):
+                                        await res
                             
                             if "tool_calls" in delta:
                                 for tc_chunk in delta["tool_calls"]:
@@ -633,6 +641,8 @@ class AugAgent(AgentConfig):
                                             if "arguments" in tc_chunk["function"]:
                                                 tool_calls[idx]["function"]["arguments"] += tc_chunk["function"]["arguments"]
                         
+                        prompt_toks = sum(self._estimate_tokens(str(m.get("content", ""))) for m in messages)
+                        completion_toks = self._estimate_tokens(full_content)
                         reconstructed = {
                             "id": "stream",
                             "object": "chat.completion",
@@ -645,7 +655,12 @@ class AugAgent(AgentConfig):
                                     "content": full_content if full_content else None,
                                 },
                                 "finish_reason": "stop"
-                            }]
+                            }],
+                            "usage": usage_data or {
+                                "prompt_tokens": prompt_toks,
+                                "completion_tokens": completion_toks,
+                                "total_tokens": prompt_toks + completion_toks,
+                            }
                         }
                         if tool_calls:
                             reconstructed_choices: Any = reconstructed["choices"]
