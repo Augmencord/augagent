@@ -62,6 +62,19 @@ from augagent.tools_file_write import (
     replace_in_file,
     write_file,
 )
+from augagent.tools_search import (
+    find_files,
+    grep_search,
+    list_directory,
+)
+from augagent.tools_git import (
+    git_add,
+    git_branch,
+    git_commit,
+    git_diff,
+    git_log,
+    git_status,
+)
 
 __version__ = "1.0.0"
 
@@ -86,6 +99,17 @@ __all__ = [
     "apply_patch",
     "resolve_sandboxed_path",
     "get_workspace_root",
+    # Code search tools
+    "grep_search",
+    "find_files",
+    "list_directory",
+    # Git integration tools
+    "git_status",
+    "git_diff",
+    "git_commit",
+    "git_log",
+    "git_branch",
+    "git_add",
     # Backward compatibility aliases
     "Agent",
     "Task",
