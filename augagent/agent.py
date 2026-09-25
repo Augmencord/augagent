@@ -464,7 +464,7 @@ class AugAgent(AgentConfig):
                         status=ExecutionStatus.WAITING_HUMAN_INPUT,
                         pending_action=pending.model_dump(mode='json')
                     )
-                    return pending
+                    await self._get_approval_event().wait()
                     
                 t0 = time.time()
                 tool_output = await self._execute_tool_call(tc, logger)

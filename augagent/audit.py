@@ -59,14 +59,26 @@ class AuditLogger:
                 redacted[k] = v
         return redacted
 
-    def log_event(self, event_type: str, data: Dict[str, Any], tenant_id: str = "default"):
+    def log_event(self, event_type: str, actor_or_data: Any, data: Any = None, tenant_id: str = "default"):
         """Log an event to the audit file with SHA-256 checksum."""
         try:
+            if data is not None and isinstance(actor_or_data, str) and isinstance(data, dict):
+                actor = actor_or_data
+                actual_data = data
+            elif isinstance(actor_or_data, dict):
+                actor = "system"
+                actual_data = actor_or_data
+            else:
+                actor = str(actor_or_data)
+                actual_data = {"raw": str(data if data is not None else actor_or_data)}
+
             entry = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "tenant_id": tenant_id,
                 "event_type": event_type,
-                "data": self._redact_dict(data)
+                "actor": actor,
+                "data": self._redact_dict(actual_data),
+                "payload": self._redact_dict(actual_data),
             }
             
             entry_json = json.dumps(entry, sort_keys=True)

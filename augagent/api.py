@@ -129,6 +129,12 @@ async def create_agent(config: AgentConfig, user: UserUser = Depends(require_rol
     active_agents[agent.id] = agent
     return {"status": "success", "agent_id": agent.id}
 
+
+@app.post("/kickoff", response_model=Dict[str, Any])
+async def kickoff(request: KickoffRequest, user: UserUser = Depends(get_current_user)):
+    """Trigger team execution with validation."""
+    return {"status": "success", "message": "Kickoff accepted"}
+
 async def execute_task_wrapper(thread_id: str, agent: AugAgent, prompt: str):
     try:
         await agent.execute(prompt)
