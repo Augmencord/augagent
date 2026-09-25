@@ -26,7 +26,8 @@ def resolve_sandboxed_path(filepath: str | Path, workspace_root: Path | str | No
     Raises PermissionError if path traversal outside workspace is attempted.
     """
     root = Path(workspace_root).resolve() if workspace_root else get_workspace_root()
-    path_obj = Path(filepath)
+    normalized_str = str(filepath).replace("\\", "/")
+    path_obj = Path(normalized_str)
     target = (root / path_obj).resolve() if not path_obj.is_absolute() else path_obj.resolve()
 
     try:
